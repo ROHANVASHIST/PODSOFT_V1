@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
+import { QRCodeSVG } from 'qrcode.react';
 import { 
   Settings, 
   Radio, 
@@ -156,15 +158,22 @@ const SourceVideo = ({
   const [isChromaActive, setIsChromaActive] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [showTroubleshoot, setShowTroubleshoot] = useState(false);
-  const [status, setStatus] = useState<'connecting' | 'connected' | 'failed'>(type === 'droidcam' ? 'connecting' : 'connected');
+  
+  // Use the stream prop if provided, otherwise default to status management
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'failed'>((stream || type !== 'droidcam') ? 'connected' : 'connecting');
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const watchdogRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Update status if stream becomes available
+  useEffect(() => {
+    if (stream) setStatus('connected');
+  }, [stream]);
+
   const startWatchdog = () => {
     if (watchdogRef.current) clearTimeout(watchdogRef.current);
-    if (type !== 'droidcam') return;
+    if (type !== 'droidcam' || stream) return;
 
     // Transition to failed if neither onLoad nor onError fires within 45 seconds
     watchdogRef.current = setTimeout(() => {
@@ -357,11 +366,12 @@ const SourceVideo = ({
   } : {};
 
   const isLocal = isLocalIP(url || '');
-  const displayUrl = (url && isLocal) ? url : (url ? `/api/proxy?url=${encodeURIComponent(url)}&retry=${retryKey}` : undefined);
+  const isHttps = window.location.protocol === 'https:';
+  const displayUrl = (url && isLocal && !isHttps) ? url : (url ? `/api/proxy?url=${encodeURIComponent(url)}&retry=${retryKey}` : undefined);
 
   return (
     <div className="relative w-full h-full overflow-hidden" data-source-id={id}>
-      {type === 'droidcam' && url && (
+      {type === 'droidcam' && url && !stream && (
         <div id={`source-container-${(url || '').replace(/[^a-zA-Z0-9]/g, '')}`} className="w-full h-full bg-zinc-900 group relative flex flex-col items-center justify-center overflow-hidden font-sans">
           <img 
             src={displayUrl}
@@ -581,7 +591,7 @@ const SourceVideo = ({
         </div>
       )}
 
-      {type !== 'droidcam' && (
+      {(type !== 'droidcam' || stream) && (
         <video 
           ref={videoRef} 
           data-source-id={id}
@@ -604,11 +614,14 @@ const SourceVideo = ({
   );
 };
 
+type SessionState = 'prep' | 'recording' | 'paused' | 'stopped' | 'processing' | 'ready' | 'archived' | 'failed';
+
 export default function App() {
   const { user, login, logout, signup, loginWithEmail, loading: authLoading } = useFirebase();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [activeSceneId, setActiveSceneId] = useState('');
   const [studioId, setStudioId] = useState<string | null>(null);
+  const [sessionState, setSessionState] = useState<SessionState>('prep');
   
   // Auth Form State
   const [authMode, setAuthMode] = useState<'google' | 'signin' | 'signup'>('google');
@@ -628,6 +641,7 @@ export default function App() {
 
   // Local-only streams map to persist media between Firestore syncs
   const [streams, setStreams] = useState<Record<string, MediaStream>>({});
+  const [selectedPreviewSourceId, setSelectedPreviewSourceId] = useState<string | null>(null);
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -637,7 +651,17 @@ export default function App() {
   const virtualStreamRef = useRef<MediaStream | null>(null);
   const virtualLoopRef = useRef<number | null>(null);
 
-  const startVirtualCam = () => {
+  const socketRef = useRef<Socket | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+
+  const activeSceneRef = useRef<Scene>({ id: 'empty', name: 'No Scene', sources: [] });
+
+  useEffect(() => {
+    const scene = scenes.find(s => s.id === activeSceneId) || scenes[0] || { id: 'empty', name: 'No Scene', sources: [] };
+    activeSceneRef.current = scene;
+  }, [scenes, activeSceneId]);
+
+  const startVirtualCam = async () => {
     if (!virtualCanvasRef.current) {
       virtualCanvasRef.current = document.createElement('canvas');
     }
@@ -648,20 +672,30 @@ export default function App() {
 
     const canvas = virtualCanvasRef.current;
     const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
+    if (!ctx) return null;
+
+    // Verify sources are in a reasonable state before starting capture
+    const currentSources = activeSceneRef.current.sources;
+    for (const src of currentSources) {
+      if (!src.visible) continue;
+      const container = document.querySelector(`[data-source-id="${src.id}"]`);
+      if (container) {
+          const video = container.querySelector('video');
+          if (video && video.readyState === 0) {
+              console.warn(`Source ${src.name} is not loaded yet.`);
+          }
+      }
+    }
 
     const renderLoop = () => {
       if (!ctx || !canvas) return;
       
-      // Clear with black for professional look
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Composite all visible sources in current scene
-      // In the UI, index 0 is on top (zIndex: length - index).
-      // So we must draw from bottom (index N) to top (index 0).
-      for (let i = activeScene.sources.length - 1; i >= 0; i--) {
-        const src = activeScene.sources[i];
+      const currentSources = activeSceneRef.current.sources;
+      for (let i = currentSources.length - 1; i >= 0; i--) {
+        const src = currentSources[i];
         if (!src.visible) continue;
 
         const container = document.querySelector(`[data-source-id="${src.id}"]`);
@@ -677,14 +711,11 @@ export default function App() {
 
         if (isReady) {
           ctx.save();
-          
-          // Apply real-time filters
           const b = (src.filters?.brightness || 100) / 100;
           const c = (src.filters?.contrast || 100) / 100;
           const s = (src.filters?.saturation || 100) / 100;
           ctx.filter = `brightness(${b}) contrast(${c}) saturate(${s})`;
 
-          // Determine geometry (matching Preview UI logic)
           const wPercent = src.type === 'camera' ? 0.4 : 1.0;
           const hPercent = src.type === 'camera' ? 0.4 : 1.0;
           const targetW = canvas.width * wPercent;
@@ -692,24 +723,41 @@ export default function App() {
           const x = i * 20; 
           const y = i * 20;
 
-          // Draw the element
           try {
             ctx.drawImage(el as CanvasImageSource, x, y, targetW, targetH);
           } catch (e) {
-            // Silently catch occasional errors if element is disconnected mid-frame
+            console.warn('Skipping tainted source during draw:', src.name);
           }
-          
           ctx.restore();
         }
       }
-
       virtualLoopRef.current = requestAnimationFrame(renderLoop);
     };
 
     renderLoop();
-    virtualStreamRef.current = canvas.captureStream(fpsValue || 60);
-    setIsVirtualCam(true);
-    return virtualStreamRef.current;
+
+    try {
+      // Small delay to let renderLoop start and canvas initialize
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      virtualStreamRef.current = canvas.captureStream(fpsValue || 60);
+      setIsVirtualCam(true);
+      
+      // Update projector if it's open
+      const projector = window.open('', 'VirtualProjector');
+      if (projector && !projector.closed) {
+          const video = projector.document.getElementById('v') as HTMLVideoElement;
+          if (video && virtualStreamRef.current) {
+              video.srcObject = virtualStreamRef.current;
+          }
+      }
+      
+      return virtualStreamRef.current;
+    } catch (e) {
+      console.error('Failed to capture stream:', e);
+      stopVirtualCam();
+      return null;
+    }
   };
 
   const stopVirtualCam = () => {
@@ -860,25 +908,56 @@ export default function App() {
   useEffect(() => {
     if (!studioId) return;
 
-    const q = query(collection(db, 'scenes'), where('studioId', '==', studioId), orderBy('order', 'asc'));
-    const unsubscribeScenes = onSnapshot(q, (snapshot) => {
-      const sceneData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as any[];
-      
-      // For each scene, we need its items
-      // In a real app, we'd sync items separately or use a joined structure
-      // For simplicity, we'll let individual scenes load items or sync all items at once
-      setScenes(sceneData.map(s => ({ ...s, sources: [] })));
-      if (!activeSceneId && sceneData.length > 0) {
-        setActiveSceneId(sceneData[0].id);
-      }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'scenes');
+    // WebRTC Signaling Setup
+    socketRef.current = io(window.location.origin);
+    
+    socketRef.current.on('connect', () => {
+      console.log('Signaling Connected', socketRef.current?.id);
+      socketRef.current?.emit('join-room', studioId);
     });
 
-    return () => unsubscribeScenes();
+    socketRef.current.on('signal', async (data) => {
+      if (!pcRef.current) setupPeerConnection();
+      
+      const { signal, senderId } = data;
+      if (signal.type === 'offer') {
+          await pcRef.current?.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          const answer = await pcRef.current?.createAnswer();
+          await pcRef.current?.setLocalDescription(answer as RTCSessionDescriptionInit);
+          socketRef.current?.emit('signal', { roomId: studioId, signal: { type: 'answer', sdp: pcRef.current?.localDescription }, to: senderId });
+      } else if (signal.type === 'candidate') {
+          await pcRef.current?.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      }
+    });
+
+    const setupPeerConnection = () => {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.onicecandidate = e => { if (e.candidate) socketRef.current?.emit('signal', { roomId: studioId, signal: { type: 'candidate', candidate: e.candidate } }); };
+        pc.ontrack = e => { console.log('Received track:', e.track); };
+        pcRef.current = pc;
+    };
+
+    const q = query(collection(db, 'scenes'), where('studioId', '==', studioId), orderBy('order', 'asc'));
+    const unsubscribeScenes = onSnapshot(q, (snapshot) => {
+        // ... keep existing scene logic
+        const sceneData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+        })) as any[];
+        
+        setScenes(sceneData.map(s => ({ ...s, sources: [] })));
+        if (!activeSceneId && sceneData.length > 0) {
+        setActiveSceneId(sceneData[0].id);
+        }
+    }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'scenes');
+    });
+
+    return () => {
+        unsubscribeScenes();
+        socketRef.current?.disconnect();
+        pcRef.current?.close();
+    };
   }, [studioId]);
 
   // 3. Sync Scene Items (Simplified for current architecture)
@@ -1267,6 +1346,25 @@ export default function App() {
     }
   };
 
+  const handleReorderSource = async (sourceId: string, direction: 'up' | 'down') => {
+    const currentIndex = activeScene.sources.findIndex(s => s.id === sourceId);
+    if (currentIndex === -1) return;
+
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex < 0 || newIndex >= activeScene.sources.length) return;
+
+    const sourceToMove = activeScene.sources[currentIndex];
+    const targetSource = activeScene.sources[newIndex];
+
+    try {
+      // Swap order values
+      await updateDoc(doc(db, 'sceneItems', sourceToMove.id), { order: newIndex });
+      await updateDoc(doc(db, 'sceneItems', targetSource.id), { order: currentIndex });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'sceneItems');
+    }
+  };
+
   const deleteSource = async (sourceId: string) => {
     try {
       await deleteDoc(doc(db, 'sceneItems', sourceId));
@@ -1282,13 +1380,19 @@ export default function App() {
 
   const startRecording = async () => {
     chunksRef.current = [];
-    const canvas = document.querySelector('canvas');
+    
+    // Prefer virtual camera canvas if running
     let streamToRecord: MediaStream | null = null;
     
-    if (canvas) {
-      streamToRecord = canvas.captureStream(30);
+    if (isVirtualCam && virtualCanvasRef.current) {
+        streamToRecord = virtualCanvasRef.current.captureStream(30);
     } else {
-      streamToRecord = activeScene.sources.find(s => s.stream)?.stream || null;
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+          streamToRecord = canvas.captureStream(30);
+        } else {
+          streamToRecord = activeScene.sources.find(s => s.stream)?.stream || null;
+        }
     }
 
     if (!streamToRecord) {
@@ -1363,6 +1467,7 @@ export default function App() {
     // Start chunking every 10 minutes (600,000ms)
     recorder.start(600000); 
     setIsRecording(true);
+    setSessionState('recording');
   };
 
   const startScreenRecording = async () => {
@@ -1453,20 +1558,24 @@ export default function App() {
       recorder.start(10000); 
       screenRecorderRef.current = recorder;
       setIsScreenRecording(true);
+      setSessionState('recording');
     } catch (err) {
       console.error("Screen recording failed", err);
       setIsScreenRecording(false);
+      setSessionState('failed');
     }
   };
 
   const stopScreenRecording = () => {
     screenRecorderRef.current?.stop();
     setIsScreenRecording(false);
+    setSessionState('stopped');
   };
 
   const stopRecording = () => {
     recorderRef.current?.stop();
     setIsRecording(false);
+    setSessionState('stopped');
     setRecordingId(null);
   };
 
@@ -1909,14 +2018,47 @@ export default function App() {
           <div className="flex-1 flex flex-col min-h-0">
             <div className="flex-1 bg-black/40 p-4 flex gap-4 overflow-hidden justify-center items-center relative">
           
-          {studioMode && (
+            {studioMode && (
             <div className="flex-1 max-w-[45%] h-full flex flex-col gap-2">
               <div className="text-[10px] uppercase font-bold text-obs-text-dim text-center">Preview</div>
+              
+              {/* Source Selection for Preview */}
+              <div className="flex gap-1 overflow-x-auto pb-1">
+                {Array.from(new Map(scenes.flatMap(s => s.sources).map(s => [s.id, s])).values()).map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedPreviewSourceId(s.id)}
+                    className={`text-[9px] px-2 py-1 rounded ${selectedPreviewSourceId === s.id ? 'bg-blue-600 text-white' : 'bg-obs-surface text-obs-text-dim hover:text-white'}`}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex-1 bg-black border border-obs-border relative overflow-hidden">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10">
-                   <Video size={120} />
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center text-zinc-800 font-bold text-4xl">PODSOFT</div>
+              {/* All sources across scenes */}
+              {(() => {
+                const allSources = Array.from(new Map(scenes.flatMap(s => s.sources).map(s => [s.id, s])).values());
+                const previewSourceId = selectedPreviewSourceId || allSources[0]?.id;
+                const source = allSources.find(s => s.id === previewSourceId);
+                return source ? (
+                     <div
+                      key={source.id}
+                      className="absolute inset-0"
+                    >
+                      <SourceVideo 
+                        id={source.id}
+                        stream={streams[source.id] || source.stream} 
+                        url={source.url} 
+                        locked={source.locked} 
+                        filters={source.filters} 
+                        type={source.type}
+                        volume={source.volume}
+                        isMuted={source.isMuted}
+                      />
+                    </div>
+                ) : null;
+              })()}
               </div>
             </div>
           )}
@@ -1972,7 +2114,7 @@ export default function App() {
                         <motion.div
                           key={source.id}
                           drag={!source.locked}
-                          data-source-id={source.id}
+                          data-container-id={source.id}
                           dragMomentum={false}
                           onDragEnd={async (_, info) => {
                             if (source.locked) return;
@@ -2188,7 +2330,7 @@ export default function App() {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
-                  className="fixed inset-0 m-auto w-80 h-fit bg-obs-surface border border-obs-border p-5 z-[100] shadow-2xl rounded flex flex-col gap-4"
+                  className="fixed inset-0 m-auto w-80 h-fit max-h-[90vh] bg-obs-surface border border-obs-border p-5 z-[100] shadow-2xl rounded flex flex-col gap-4"
                 >
                   <div className="flex justify-between items-center border-b border-obs-border pb-2">
                      <span className="text-xs font-bold uppercase tracking-widest text-green-400 font-mono flex items-center gap-2">
@@ -2196,7 +2338,11 @@ export default function App() {
                      </span>
                      <button onClick={() => setShowDroidCamInput(false)} className="hover:text-white"><Plus size={14} className="rotate-45" /></button>
                   </div>
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col items-center gap-2 bg-zinc-900 p-3 rounded">
+                    <QRCodeSVG value={`podsoft:${studioId}`} size={160} />
+                    <p className="text-[9px] text-zinc-400 text-center">Scan to connect mobile device</p>
+                  </div>
+                  <div className="flex flex-col gap-3 overflow-y-auto pr-1">
                     <div className="bg-green-900/20 border border-green-500/30 p-2.5 rounded text-[10px] text-green-200 leading-snug">
                        <p className="font-bold border-b border-green-500/20 mb-1 pb-1">METHOD 1: DROIDCAM CLIENT (Recommended)</p>
                        If you have the DroidCam app installed on your PC, click below to use the low-latency virtual driver.
@@ -2318,8 +2464,16 @@ export default function App() {
                   onClick={() => setShowProperties(true)}
                 />
                 <div className="ml-auto flex gap-2">
-                  <ChevronUp size={14} className="hover:text-white cursor-pointer" />
-                  <ChevronDown size={14} className="hover:text-white cursor-pointer" />
+                  <ChevronUp 
+                    size={14} 
+                    className={`hover:text-white cursor-pointer ${selectedSourceId ? '' : 'opacity-20 pointer-events-none'}`} 
+                    onClick={() => selectedSourceId && handleReorderSource(selectedSourceId, 'up')}
+                  />
+                  <ChevronDown 
+                    size={14} 
+                    className={`hover:text-white cursor-pointer ${selectedSourceId ? '' : 'opacity-20 pointer-events-none'}`} 
+                    onClick={() => selectedSourceId && handleReorderSource(selectedSourceId, 'down')}
+                  />
                 </div>
               </div>
             </div>

@@ -1,10 +1,12 @@
-import axios from "axios";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import http from "http";
+import { Server } from "socket.io";
+import axios from "axios";
 
 dotenv.config();
 
@@ -13,9 +15,37 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  const server = http.createServer(app);
+  const io = new Server(server, {
+    cors: { origin: "*" }
+  });
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Socket.io signaling
+  io.on("connection", (socket) => {
+    console.log("Client connected:", socket.id);
+
+    socket.on("join-room", (roomId) => {
+      socket.join(roomId);
+      console.log(`Socket ${socket.id} joined room ${roomId}`);
+    });
+
+    socket.on("signal", (data) => {
+      io.to(data.roomId).emit("signal", {
+        senderId: socket.id,
+        ...data
+      });
+    });
+
+    socket.on("command", (data) => {
+      io.to(data.roomId).emit("command", {
+        senderId: socket.id,
+        ...data
+      });
+    });
+  });
 
   // Gemini API Initialization
   const ai = new GoogleGenAI({
@@ -27,9 +57,29 @@ async function startServer() {
     }
   });
 
-  // API routes
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", app: "PodSoft Studio" });
+  // ... (rest of the routes are the same)
+
+  // Session Management API
+  app.post("/api/v1/sessions", (req, res) => {
+    // TODO: Create session in Firestore
+    const { name, mode } = req.body;
+    res.json({ id: "session_" + Date.now(), name, mode, status: "prep" });
+  });
+
+  app.get("/api/v1/sessions/:id", (req, res) => {
+    // TODO: Get session from Firestore
+    res.json({ id: req.params.id, status: "prep" });
+  });
+
+  // Processing/Jobs API
+  app.post("/api/v1/sessions/:id/process", (req, res) => {
+    // TODO: Enqueue processing job
+    res.json({ jobId: "job_" + Date.now(), status: "queued" });
+  });
+
+  app.get("/api/v1/jobs/:id", (req, res) => {
+    // TODO: Get job status
+    res.json({ id: req.params.id, status: "processing", progress: 50 });
   });
 
   // Proxy route for DroidCam/CORS bypass
@@ -237,7 +287,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`PodSoft running at http://localhost:${PORT}`);
   });
 

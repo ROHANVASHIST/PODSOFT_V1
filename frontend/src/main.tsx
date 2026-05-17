@@ -2,12 +2,12 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
-import { FirebaseProvider } from './components/FirebaseProvider.tsx';
+import { SupabaseProvider } from './components/SupabaseProvider.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <FirebaseProvider>
+    <SupabaseProvider>
       <App />
-    </FirebaseProvider>
+    </SupabaseProvider>
   </StrictMode>,
 );

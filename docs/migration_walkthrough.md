@@ -10,7 +10,7 @@ PODSOFT_V1/
 │   ├── package.json
 │   ├── server.ts             # Express on port 3001, Socket.io, Gemini AI, DroidCam Proxy
 │   ├── tsconfig.json
-│   └── .env                  # Backend credentials (SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY)
+│   └── .env                  # Backend credentials (SUPABASE_SECRET_KEY, GEMINI_API_KEY)
 ├── frontend/                 # Standalone React + Vite Mobile/Web Studio
 │   ├── src/
 │   ├── public/
@@ -18,7 +18,7 @@ PODSOFT_V1/
 │   ├── vite.config.ts        # Proxies /api and /socket.io to backend port 3001
 │   ├── tsconfig.json
 │   ├── package.json
-│   └── .env                  # Frontend credentials (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
+│   └── .env                  # Frontend credentials (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY)
 ├── docs/                     # Documentation Archive
 │   ├── prd.md
 │   ├── copy.md

@@ -614,6 +614,8 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAuthHelper, setShowAuthHelper] = useState(false);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   
   // New UI State
   const [currentView, setCurrentView] = useState<'studio' | 'file' | 'edit' | 'view' | 'profile' | 'drive'>('studio');
@@ -805,7 +807,20 @@ export default function App() {
   const [baseResolution, setBaseResolution] = useState('1920x1080');
   const [outputResolution, setOutputResolution] = useState('1280x720');
   const [fpsValue, setFpsValue] = useState(60);
-  const [encoder, setEncoder] = useState('x264 (Software)');
+  const [encoder, setEncoder] = useState('Hardware NVENC (H.264)');
+  const [outputBitrate, setOutputBitrate] = useState('6000 Kbps (Standard 1080p60)');
+  const [rateControl, setRateControl] = useState('CBR (Constant Bitrate)');
+  const [recordingFormat, setRecordingFormat] = useState('MP4 (.mp4)');
+  const [audioSampleRate, setAudioSampleRate] = useState('48 kHz (Pro Broadcast)');
+  const [audioChannels, setAudioChannels] = useState('Stereo (2.0)');
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [autoGainControl, setAutoGainControl] = useState(true);
+  const [streamService, setStreamService] = useState('Custom RTMP Server');
+  const [streamServer, setStreamServer] = useState('rtmp://live.twitch.tv/app');
+  const [streamKey, setStreamKey] = useState('live_sub_****************');
+  const [hotkeyRecord, setHotkeyRecord] = useState('Ctrl + Alt + R');
+  const [hotkeyStream, setHotkeyStream] = useState('Ctrl + Alt + S');
+  const [hotkeySwitch, setHotkeySwitch] = useState('Space');
 
   // Transition Settings
   const [transitionType, setTransitionType] = useState<'Fade' | 'Cut' | 'Swipe' | 'Slide'>('Fade');
@@ -840,7 +855,7 @@ export default function App() {
     const loadStudio = async () => {
       // 0. Ensure user profile exists
       try {
-        const { data: userData } = await supabase.from('users').select('*').eq('uid', user.uid).single();
+        const { data: userData } = await supabase.from('users').select('*').eq('uid', user.uid).maybeSingle();
         if (!userData) {
           await supabase.from('users').insert({
             uid: user.uid,
@@ -1684,6 +1699,13 @@ export default function App() {
                  >
                    Use email and password
                  </button>
+                 <button 
+                   onClick={() => setShowAuthHelper(true)}
+                   className="text-[10px] font-medium text-zinc-500 hover:text-zinc-400 underline flex items-center justify-center gap-1.5 mx-auto pt-2"
+                 >
+                   <Database size={12} />
+                   Troubleshooting: Google OAuth Error 400
+                 </button>
                </div>
              ) : (
                <form 
@@ -1695,7 +1717,7 @@ export default function App() {
                      if (authMode === 'signin') {
                        await loginWithEmail(email, password);
                      } else {
-                       await signup(email, password);
+                       await signup(email, password); setAuthSuccess("Account created successfully! ✉️ Please check your inbox (and spam) for a verification email before signing in.");
                      }
                    } catch (err: any) {
                      setAuthError(err.message || 'Authentication failed');
@@ -1729,8 +1751,64 @@ export default function App() {
                  </div>
 
                   {authError && (
-                    <div className="bg-red-500/10 border border-red-500/30 p-3 rounded-lg text-left">
-                      <p className="text-red-400 text-[10px] font-bold uppercase leading-tight tracking-tight">{authError}</p>
+                    <div className="bg-red-500/10 border border-red-500/30 p-3.5 rounded-xl text-left flex flex-col gap-2 shadow-lg font-sans">
+                      <div className="flex items-center gap-2 text-red-400 font-bold text-xs uppercase tracking-wider">
+                        <Lock size={14} className="shrink-0" />
+                        <span>Authentication Failed</span>
+                      </div>
+                      <p className="text-red-200 text-xs leading-relaxed font-sans">{authError}</p>
+                      
+                      {(authError.toLowerCase().includes('provider is not enabled') || authError.toLowerCase().includes('unsupported provider')) && (
+                        <div className="mt-1 bg-obs-bg/90 border border-blue-500/30 p-3 rounded-lg text-blue-200 text-xs leading-relaxed flex flex-col gap-1.5 font-sans">
+                          <span className="font-bold text-blue-400 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
+                            <Database size={12} /> Supabase Configuration Notice
+                          </span>
+                          <p className="text-zinc-200 font-medium">Email/Password authentication is currently disabled in your Supabase project.</p>
+                          <p className="text-zinc-400 text-[11px] leading-normal">
+                            To enable it: Open your <a href="https://supabase.com/dashboard/project/_/auth/providers" target="_blank" rel="noreferrer" className="text-blue-400 underline font-bold hover:text-blue-300">Supabase Dashboard</a> → <strong>Authentication</strong> → <strong>Providers</strong> → <strong>Email</strong>, turn on <strong>Enable Email provider</strong> (and confirm password login is active), then click Save.
+                          </p>
+                        </div>
+                      )}
+
+                      {(authError.toLowerCase().includes('user already registered')) && (
+                        <div className="mt-1 bg-obs-bg/90 border border-blue-500/30 p-3 rounded-lg text-blue-200 text-xs leading-relaxed flex flex-col gap-1.5 font-sans">
+                          <span className="font-bold text-blue-400 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
+                            <Sparkles size={12} /> Email Already Registered
+                          </span>
+                          <p className="text-zinc-200 font-medium">This email address already has an account associated with it.</p>
+                          <ul className="text-zinc-300 text-[11px] leading-normal space-y-1 list-disc list-inside">
+                            <li><strong>Google OAuth User:</strong> If you originally signed in with Google, please click <em>"← BACK TO GOOGLE LOGIN"</em> below and sign in with Google.</li>
+                            <li><strong>Password Login:</strong> If you set a password, click <em>"Already have an account? Sign in"</em> below to enter your password.</li>
+                          </ul>
+                        </div>
+                      )}
+
+                      {(authError.toLowerCase().includes('invalid login credentials') || authError.toLowerCase().includes('email not confirmed')) && (
+                        <div className="mt-1 bg-obs-bg/90 border border-amber-500/30 p-3 rounded-lg text-amber-200 text-xs leading-relaxed flex flex-col gap-1.5 font-sans">
+                          <span className="font-bold text-amber-400 uppercase tracking-widest text-[10px] flex items-center gap-1.5">
+                            <Sparkles size={12} /> Supabase Troubleshooting Tips
+                          </span>
+                          <ul className="text-zinc-300 text-[11px] leading-normal space-y-1 list-disc list-inside">
+                            <li><strong>Google Account?</strong> If this email was registered via Google Login, password sign-in won't work because no password was set. Use Google Login instead.</li>
+                            <li><strong>New account?</strong> Make sure you click <em>"Don't have an account? Sign up"</em> below first before trying to sign in.</li>
+                            <li><strong>Email verification:</strong> Supabase requires email confirmation by default. If you didn't verify your email, sign-in is blocked (400 Bad Request).</li>
+                            <li><strong>Dev Shortcut:</strong> In your <a href="https://supabase.com/dashboard/project/_/auth/providers" target="_blank" rel="noreferrer" className="text-blue-400 underline font-bold hover:text-blue-300">Supabase Dashboard</a> → Authentication → Providers → Email, toggle <strong>OFF</strong> <em>"Confirm email"</em> to allow instant login.</li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {authSuccess && (
+                    <div className="bg-green-500/10 border border-green-500/30 p-4 rounded-xl text-left flex flex-col gap-2 shadow-lg font-sans">
+                      <div className="flex items-center gap-2 text-green-400 font-bold text-xs uppercase tracking-wider">
+                        <Sparkles size={14} className="shrink-0" />
+                        <span>Account Created Successfully! ✉️</span>
+                      </div>
+                      <p className="text-green-200 text-xs leading-relaxed font-sans">{authSuccess}</p>
+                      <div className="mt-2 bg-obs-bg/90 border border-green-500/20 p-3 rounded-lg text-zinc-300 text-[11px] leading-relaxed font-sans">
+                        ⚡ <strong>Dev Tip:</strong> Want instant login without checking email? Go to your <a href="https://supabase.com/dashboard/project/_/auth/providers" target="_blank" rel="noreferrer" className="text-blue-400 underline font-bold hover:text-blue-300">Supabase Auth Settings</a>, toggle <strong>OFF</strong> <em>Confirm email</em> under Email settings, and save.
+                      </div>
                     </div>
                   )}
 
@@ -1754,13 +1832,68 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setAuthMode('google');
-                      setAuthError(null);
+                      setAuthError(null); setAuthSuccess(null);
                     }}
                     className="text-[10px] font-black text-blue-400 hover:text-blue-300 uppercase tracking-widest mt-2"
                  >
                    ← BACK TO GOOGLE LOGIN
                  </button>
                </form>
+             )}
+             
+             {showAuthHelper && (
+               <div className="absolute inset-0 bg-obs-surface/98 p-6 md:p-8 flex flex-col items-start text-left gap-4 z-50 rounded-2xl border border-blue-500/30 backdrop-blur-xl overflow-y-auto font-sans">
+                 <div className="flex items-center justify-between w-full pb-3 border-b border-white/10">
+                   <div className="flex items-center gap-2 text-blue-400 font-bold text-xs uppercase tracking-wider">
+                     <Database size={16} />
+                     <span>Google OAuth 400 Guide</span>
+                   </div>
+                   <button 
+                     onClick={() => setShowAuthHelper(false)}
+                     className="p-1 text-zinc-400 hover:text-white rounded bg-white/5 hover:bg-white/10"
+                   >
+                     <X size={16} />
+                   </button>
+                 </div>
+                 
+                 <div className="flex flex-col gap-3 text-xs text-zinc-300 leading-relaxed">
+                   <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg text-red-200 leading-normal">
+                     <span className="font-bold text-red-400 uppercase text-[10px] block mb-1">Why Error 400: redirect_uri_mismatch occurs:</span>
+                     Google blocks login when Supabase's Auth Callback URL is missing from your Google Cloud Console Authorized Redirect URIs list.
+                   </div>
+                   
+                   <p className="font-bold text-white text-[11px] uppercase tracking-wider mt-1">3-Step Quick Fix:</p>
+                   
+                   <div className="flex flex-col gap-3 pl-3 border-l-2 border-blue-500">
+                     <p>
+                       <strong className="text-white">1. Copy your Supabase Callback URL:</strong><br />
+                       <code className="bg-black/80 px-2.5 py-1.5 rounded text-blue-300 select-all font-mono text-[11px] inline-block mt-1 border border-white/10">
+                         https://vjhipwrhviifatijfbfn.supabase.co/auth/v1/callback
+                       </code>
+                     </p>
+                     
+                     <p>
+                       <strong className="text-white">2. Find your Client ID in Google Cloud Console:</strong><br />
+                       Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-blue-400 underline font-bold hover:text-blue-300">Google Cloud Credentials</a> and click the Web Client ID matching:
+                       <code className="bg-black/60 p-2 rounded text-amber-300 select-all font-mono text-[10px] block mt-1.5 border border-white/5 break-all">
+                         612995325524-fel9ulojbosftnm9p6pe9o8nu9adimqp.apps.googleusercontent.com
+                       </code>
+                     </p>
+                     
+                     <p>
+                       <strong className="text-white">3. Add & Save:</strong><br />
+                       Under <strong>Authorized redirect URIs</strong>, click <em>ADD URI</em>, paste the exact callback URL from Step 1, and click <strong>Save</strong>. <span className="text-zinc-400 text-[11px] block mt-1">Note: Google authentication servers may take up to 5 minutes to propagate.</span>
+                     </p>
+                   </div>
+                 </div>
+
+                 <button 
+                   onClick={() => setShowAuthHelper(false)}
+                   className="mt-6 w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95"
+                 >
+                   Got it
+                 </button>
+               </div>
              )}
              
              <p className="text-[10px] text-zinc-500 uppercase font-black tracking-[0.2em] italic">Pro-Grade Persistence Enabled</p>
@@ -1847,24 +1980,83 @@ export default function App() {
                       ))}
                    </div>
                    
-                   <div className="flex-1 overflow-auto p-8 bg-obs-bg/30">
+                   <div className="flex-1 overflow-auto p-8 bg-obs-bg/30 font-sans">
                       {selectedSettingsTab === 'General' && (
-                        <div className="flex flex-col gap-8">
+                        <div className="flex flex-col gap-8 animate-fade-in text-left">
                            <section>
-                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Application Environment</h3>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Application & Layout</h3>
                               <div className="grid gap-4">
-                                 <SettingRow label="Studio Mode" description="Enables preview/program layout for professional switches." enabled={studioMode} onToggle={() => setStudioMode(!studioMode)} />
-                                 <SettingRow label="Hardware Acceleration" description="Use GPU for video processing (experimental)." enabled={true} />
-                                 <SettingRow label="Auto-Record on Start" description="Automatically start recording when streaming begins." />
+                                 <SettingRow label="Studio Mode" description="Enables preview/program dual layout for professional broadcast switching." enabled={studioMode} onToggle={() => setStudioMode(!studioMode)} />
+                                 <SettingRow label="Hardware Acceleration" description="Offloads video encoding and UI rendering to GPU hardware NVENC/AMF." enabled={true} />
+                                 <SettingRow label="Auto-Record on Stream" description="Automatically start local file recording whenever an RTMP stream is initiated." enabled={false} />
+                                 <SettingRow label="System Tray Minimization" description="Keep PodSoft Studio active in background tray when closing main window." enabled={true} />
                               </div>
                            </section>
                         </div>
                       )}
                       
-                      {selectedSettingsTab === 'Video' && (
-                        <div className="flex flex-col gap-8">
+                      {selectedSettingsTab === 'Stream' && (
+                        <div className="flex flex-col gap-6 animate-fade-in text-left font-sans">
                            <section>
-                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Canvas Dimensions</h3>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Stream Destination & Ingest</h3>
+                              <div className="grid gap-6">
+                                 <SelectRow label="Service / Provider" options={['Custom RTMP Server', 'Twitch (Auto-Ingest)', 'YouTube Live (RTMP)', 'Facebook Live']} value={streamService} onChange={setStreamService} />
+                                 <div className="flex flex-col gap-2">
+                                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Server URL</label>
+                                   <input type="text" value={streamServer} onChange={e => setStreamServer(e.target.value)} className="bg-black/40 border border-obs-border p-3 rounded-xl text-white text-xs font-mono outline-none focus:border-blue-500 transition-colors w-full" />
+                                 </div>
+                                 <div className="flex flex-col gap-2">
+                                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Stream Key</label>
+                                   <input type="password" value={streamKey} onChange={e => setStreamKey(e.target.value)} className="bg-black/40 border border-obs-border p-3 rounded-xl text-white text-xs font-mono outline-none focus:border-blue-500 transition-colors w-full" />
+                                 </div>
+                              </div>
+                           </section>
+                        </div>
+                      )}
+                      
+                      {selectedSettingsTab === 'Output' && (
+                        <div className="flex flex-col gap-8 animate-fade-in text-left font-sans">
+                           <section>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Streaming Output Profile</h3>
+                              <div className="grid gap-6">
+                                 <SelectRow label="Video Encoder" options={['Hardware NVENC (H.264)', 'Hardware Apple VT (H.264)', 'Software x264', 'AV1 Hardware (RTX 40+)']} value={encoder} onChange={setEncoder} />
+                                 <SelectRow label="Rate Control" options={['CBR (Constant Bitrate)', 'VBR (Variable Bitrate)', 'CQP (Lossless Quality)']} value={rateControl} onChange={setRateControl} />
+                                 <SelectRow label="Video Bitrate" options={['6000 Kbps (Standard 1080p60)', '8000 Kbps (High Quality)', '4500 Kbps (Standard 720p60)', '2500 Kbps (Mobile / Low Bandwidth)']} value={outputBitrate} onChange={setOutputBitrate} />
+                              </div>
+                           </section>
+                           <section>
+                              <h3 className="text-xs font-black text-purple-400 uppercase tracking-[0.3em] mb-4">Recording Output Profile</h3>
+                              <div className="grid gap-6">
+                                 <SelectRow label="Recording Format" options={['MP4 (.mp4)', 'MKV (.mkv - Crash Resilient)', 'MOV (.mov - ProRes Compatible)']} value={recordingFormat} onChange={setRecordingFormat} />
+                                 <SettingRow label="Separate Audio Tracks" description="Record microphone and desktop audio into multitrack discrete channels." enabled={true} />
+                              </div>
+                           </section>
+                        </div>
+                      )}
+                      
+                      {selectedSettingsTab === 'Audio' && (
+                        <div className="flex flex-col gap-8 animate-fade-in text-left font-sans">
+                           <section>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">System Audio Engine</h3>
+                              <div className="grid gap-6">
+                                 <SelectRow label="Sample Rate" options={['48 kHz (Pro Broadcast)', '44.1 kHz (CD Quality)', '96 kHz (High-Res Mastering)']} value={audioSampleRate} onChange={setAudioSampleRate} />
+                                 <SelectRow label="Audio Channels" options={['Stereo (2.0)', 'Mono (1.0)', 'Surround 5.1 (Theater)']} value={audioChannels} onChange={setAudioChannels} />
+                              </div>
+                           </section>
+                           <section>
+                              <h3 className="text-xs font-black text-green-400 uppercase tracking-[0.3em] mb-4">Real-Time DSP Filters</h3>
+                              <div className="grid gap-4">
+                                 <SettingRow label="AI Noise Suppression (RNNoise)" description="Eliminates background fan noise, typing clicks, and room echo instantly." enabled={noiseSuppression} onToggle={() => setNoiseSuppression(!noiseSuppression)} />
+                                 <SettingRow label="Auto Gain Control (AGC)" description="Dynamically levels microphone audio to prevent clipping on loud shouts." enabled={autoGainControl} onToggle={() => setAutoGainControl(!autoGainControl)} />
+                              </div>
+                           </section>
+                        </div>
+                      )}
+
+                      {selectedSettingsTab === 'Video' && (
+                        <div className="flex flex-col gap-8 animate-fade-in text-left font-sans">
+                           <section>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Canvas & Scaling Dimensions</h3>
                               <div className="grid gap-6">
                                  <SelectRow label="Base (Canvas) Resolution" options={['1920x1080', '1280x720', '1080x1920']} value={baseResolution} onChange={setBaseResolution} />
                                  <SelectRow label="Output (Scaled) Resolution" options={['1920x1080', '1280x720', '720x480']} value={outputResolution} onChange={setOutputResolution} />
@@ -1874,10 +2066,25 @@ export default function App() {
                         </div>
                       )}
                       
-                      {selectedSettingsTab === 'Stream' && (
-                        <div className="flex flex-col items-center justify-center p-20 text-center gap-4 text-zinc-500">
-                           <Radio size={48} strokeWidth={1} />
-                           <p className="font-bold text-sm">Streaming services are currently managed via PodSync Cloud.</p>
+                      {selectedSettingsTab === 'Hotkeys' && (
+                        <div className="flex flex-col gap-6 animate-fade-in text-left font-sans">
+                           <section>
+                              <h3 className="text-xs font-black text-blue-400 uppercase tracking-[0.3em] mb-4">Global Keyboard Shortcuts</h3>
+                              <div className="grid gap-4">
+                                 <div className="flex items-center justify-between p-3.5 bg-black/40 rounded-xl border border-obs-border">
+                                   <span className="text-xs font-bold text-white uppercase tracking-wider">Start / Stop Recording</span>
+                                   <input type="text" value={hotkeyRecord} onChange={e => setHotkeyRecord(e.target.value)} className="bg-blue-600/20 border border-blue-500/40 px-3 py-1.5 rounded-lg text-blue-300 font-mono text-xs text-center w-36 outline-none focus:border-blue-400" />
+                                 </div>
+                                 <div className="flex items-center justify-between p-3.5 bg-black/40 rounded-xl border border-obs-border">
+                                   <span className="text-xs font-bold text-white uppercase tracking-wider">Start / Stop Streaming</span>
+                                   <input type="text" value={hotkeyStream} onChange={e => setHotkeyStream(e.target.value)} className="bg-blue-600/20 border border-blue-500/40 px-3 py-1.5 rounded-lg text-blue-300 font-mono text-xs text-center w-36 outline-none focus:border-blue-400" />
+                                 </div>
+                                 <div className="flex items-center justify-between p-3.5 bg-black/40 rounded-xl border border-obs-border">
+                                   <span className="text-xs font-bold text-white uppercase tracking-wider">Transition / Cut Scene</span>
+                                   <input type="text" value={hotkeySwitch} onChange={e => setHotkeySwitch(e.target.value)} className="bg-blue-600/20 border border-blue-500/40 px-3 py-1.5 rounded-lg text-blue-300 font-mono text-xs text-center w-36 outline-none focus:border-blue-400" />
+                                 </div>
+                              </div>
+                           </section>
                         </div>
                       )}
                    </div>

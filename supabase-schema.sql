@@ -75,10 +75,107 @@ CREATE TABLE IF NOT EXISTS public.recording_chunks (
     "createdAt" TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Enable Realtime for all tables
-ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.studios;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.scenes;
-ALTER PUBLICATION supabase_realtime ADD TABLE public."sceneItems";
-ALTER PUBLICATION supabase_realtime ADD TABLE public.recordings;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.recording_chunks;
+-- Enable Realtime for all tables safely (idempotent)
+DO $$
+DECLARE
+    t text;
+    tables text[] := ARRAY['users', 'studios', 'scenes', 'sceneItems', 'recordings', 'recording_chunks'];
+BEGIN
+    FOR t IN SELECT unnest(tables) LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = t
+        ) THEN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I;', t);
+        END IF;
+    END LOOP;
+END;
+$$;
+
+-- ==========================================
+-- ROW LEVEL SECURITY (RLS) CONFIGURATION
+-- ==========================================
+
+-- 1. Enable RLS on all tables
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.studios ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scenes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."sceneItems" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.recordings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.recording_chunks ENABLE ROW LEVEL SECURITY;
+
+-- 2. Create permissive policies for authenticated users
+-- Users Table
+DROP POLICY IF EXISTS "Allow public read users" ON public.users;
+CREATE POLICY "Allow public read users" ON public.users FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow user insert self" ON public.users;
+CREATE POLICY "Allow user insert self" ON public.users FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow user update self" ON public.users;
+CREATE POLICY "Allow user update self" ON public.users FOR UPDATE USING (auth.role() = 'authenticated');
+
+-- Studios Table
+DROP POLICY IF EXISTS "Allow public read studios" ON public.studios;
+CREATE POLICY "Allow public read studios" ON public.studios FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated insert studios" ON public.studios;
+CREATE POLICY "Allow authenticated insert studios" ON public.studios FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated update studios" ON public.studios;
+CREATE POLICY "Allow authenticated update studios" ON public.studios FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated delete studios" ON public.studios;
+CREATE POLICY "Allow authenticated delete studios" ON public.studios FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Scenes Table
+DROP POLICY IF EXISTS "Allow public read scenes" ON public.scenes;
+CREATE POLICY "Allow public read scenes" ON public.scenes FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated insert scenes" ON public.scenes;
+CREATE POLICY "Allow authenticated insert scenes" ON public.scenes FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated update scenes" ON public.scenes;
+CREATE POLICY "Allow authenticated update scenes" ON public.scenes FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated delete scenes" ON public.scenes;
+CREATE POLICY "Allow authenticated delete scenes" ON public.scenes FOR DELETE USING (auth.role() = 'authenticated');
+
+-- SceneItems Table
+DROP POLICY IF EXISTS "Allow public read sceneItems" ON public."sceneItems";
+CREATE POLICY "Allow public read sceneItems" ON public."sceneItems" FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated insert sceneItems" ON public."sceneItems";
+CREATE POLICY "Allow authenticated insert sceneItems" ON public."sceneItems" FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated update sceneItems" ON public."sceneItems";
+CREATE POLICY "Allow authenticated update sceneItems" ON public."sceneItems" FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated delete sceneItems" ON public."sceneItems";
+CREATE POLICY "Allow authenticated delete sceneItems" ON public."sceneItems" FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Recordings Table
+DROP POLICY IF EXISTS "Allow public read recordings" ON public.recordings;
+CREATE POLICY "Allow public read recordings" ON public.recordings FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated insert recordings" ON public.recordings;
+CREATE POLICY "Allow authenticated insert recordings" ON public.recordings FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated update recordings" ON public.recordings;
+CREATE POLICY "Allow authenticated update recordings" ON public.recordings FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated delete recordings" ON public.recordings;
+CREATE POLICY "Allow authenticated delete recordings" ON public.recordings FOR DELETE USING (auth.role() = 'authenticated');
+
+-- Recording Chunks Table
+DROP POLICY IF EXISTS "Allow public read recording_chunks" ON public.recording_chunks;
+CREATE POLICY "Allow public read recording_chunks" ON public.recording_chunks FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow authenticated insert recording_chunks" ON public.recording_chunks;
+CREATE POLICY "Allow authenticated insert recording_chunks" ON public.recording_chunks FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated update recording_chunks" ON public.recording_chunks;
+CREATE POLICY "Allow authenticated update recording_chunks" ON public.recording_chunks FOR UPDATE USING (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Allow authenticated delete recording_chunks" ON public.recording_chunks;
+CREATE POLICY "Allow authenticated delete recording_chunks" ON public.recording_chunks FOR DELETE USING (auth.role() = 'authenticated');

@@ -67,7 +67,10 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       email,
       password: pass,
     });
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase signup error:', error);
+      throw error;
+    }
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
@@ -75,7 +78,10 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       email,
       password: pass,
     });
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase loginWithEmail error:', error);
+      throw error;
+    }
   };
 
   const logout = async () => {

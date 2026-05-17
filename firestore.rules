@@ -1,0 +1,123 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) 
+        && data.keys().size() <= 7
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 200
+        && (data.displayName == null || (data.displayName is string && data.displayName.size() <= 100))
+        && (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1000))
+        && (data.createdAt == null || data.createdAt == request.time);
+    }
+
+    function isValidStudio(data) {
+      return data.keys().hasAll(['name', 'ownerId'])
+        && data.keys().size() <= 6
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.ownerId == request.auth.uid
+        && (data.createdAt == null || data.createdAt == request.time)
+        && (data.updatedAt == null || data.updatedAt == request.time);
+    }
+
+    function isValidScene(data) {
+      return data.keys().hasAll(['studioId', 'name', 'order'])
+        && data.keys().size() <= 7
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.order is number
+        && isValidId(data.studioId)
+        && (data.createdAt == null || data.createdAt == request.time)
+        && (data.updatedAt == null || data.updatedAt == request.time);
+    }
+
+    function isValidSceneItem(data) {
+      return data.keys().hasAll(['sceneId', 'name', 'type', 'order'])
+        && data.keys().size() <= 20
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.type in ['video', 'image', 'text', 'browser', 'screen', 'camera', 'droidcam']
+        && data.order is number
+        && isValidId(data.sceneId)
+        && (data.createdAt == null || data.createdAt == request.time)
+        && (data.updatedAt == null || data.updatedAt == request.time);
+    }
+
+    // 4. Match Blocks
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email']);
+    }
+
+    match /studios/{studioId} {
+      allow get: if isSignedIn() && isOwner(existing().ownerId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidStudio(incoming());
+      allow update: if isOwner(existing().ownerId) && isValidStudio(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']);
+      allow delete: if isOwner(existing().ownerId);
+    }
+
+    match /scenes/{sceneId} {
+      function canWriteScene(studioId) {
+        return get(/databases/$(database)/documents/studios/$(studioId)).data.ownerId == request.auth.uid;
+      }
+      
+      allow get: if isSignedIn() && canWriteScene(existing().studioId);
+      allow list: if isSignedIn() && canWriteScene(resource.data.studioId);
+      allow create: if isSignedIn() && isValidScene(incoming()) && canWriteScene(incoming().studioId);
+      allow update: if isSignedIn() && isValidScene(incoming()) && canWriteScene(existing().studioId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'order', 'updatedAt']);
+      allow delete: if isSignedIn() && canWriteScene(existing().studioId);
+    }
+
+    match /sceneItems/{itemId} {
+      function canWriteItem(sceneId) {
+        let sc = get(/databases/$(database)/documents/scenes/$(sceneId)).data;
+        return get(/databases/$(database)/documents/studios/$(sc.studioId)).data.ownerId == request.auth.uid;
+      }
+
+      allow get: if isSignedIn() && canWriteItem(existing().sceneId);
+      allow list: if isSignedIn() && canWriteItem(resource.data.sceneId);
+      allow create: if isSignedIn() && isValidSceneItem(incoming()) && canWriteItem(incoming().sceneId);
+      allow update: if isSignedIn() && isValidSceneItem(incoming()) && canWriteItem(existing().sceneId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'transform', 'filters', 'order', 'visible', 'locked', 'volume', 'isMuted', 'url', 'updatedAt']);
+      allow delete: if isSignedIn() && canWriteItem(existing().sceneId);
+    }
+
+    match /recordings/{recordingId} {
+      allow get, list, create, update, delete: if isSignedIn() && get(/databases/$(database)/documents/studios/$(resource.data.studioId)).data.ownerId == request.auth.uid;
+      
+      match /chunks/{chunkId} {
+        allow get, list, create, update, delete: if isSignedIn();
+      }
+    }
+  }
+}

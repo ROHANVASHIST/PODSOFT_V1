@@ -1,0 +1,12 @@
+{
+  "name": "PodSoft Pro",
+  "description": "Professional mobile-ready media production suite with DroidCam support, screen recording, and multi-track audio/video editing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

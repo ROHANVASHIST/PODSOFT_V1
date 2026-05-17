@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-obs-bg: #1a1a1b;
+  --color-obs-surface: #262627;
+  --color-obs-border: #3f3f40;
+  --color-obs-accent: #2e7d32;
+  --color-obs-accent-hover: #388e3c;
+  --color-obs-text: #e0e0e0;
+  --color-obs-text-dim: #a0a0a0;
+}
+
+@layer base {
+  body {
+    @apply bg-obs-bg text-obs-text font-sans overflow-hidden;
+  }
+}
+
+.obs-card {
+  @apply bg-obs-surface border border-obs-border rounded-sm;
+}
+
+.obs-button {
+  @apply px-3 py-1 bg-obs-border hover:bg-zinc-600 text-sm transition-colors rounded-sm;
+}
+
+.obs-button-primary {
+  @apply px-3 py-1 bg-blue-600 hover:bg-blue-700 text-sm transition-colors rounded-sm text-white;
+}
+
+.obs-dock-header {
+  @apply px-2 py-1 bg-obs-bg border-b border-obs-border text-[11px] uppercase tracking-wider font-semibold text-obs-text-dim flex justify-between items-center;
+}

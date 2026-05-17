@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Studio": {
+      "title": "Studio",
+      "description": "A workspace representing a recording/streaming setup.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId"]
+    },
+    "Scene": {
+      "title": "Scene",
+      "description": "A collection of sources that form a single shot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studioId": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studioId", "name", "order"]
+    },
+    "SceneItem": {
+      "title": "SceneItem",
+      "description": "A specific source instance within a scene.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sceneId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["video", "image", "text", "browser", "screen"] },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "url": { "type": "string" },
+        "volume": { "type": "number" },
+        "isMuted": { "type": "boolean" },
+        "transform": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "width": { "type": "number" },
+            "height": { "type": "number" },
+            "scale": { "type": "number" },
+            "rotation": { "type": "number" }
+          }
+        },
+        "filters": { "type": "object" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sceneId", "title", "type", "order"]
+    },
+    "Recording": {
+      "title": "Recording",
+      "description": "A broadcast recording session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studioId": { "type": "string" },
+        "name": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["recording", "completed", "failed"] }
+      },
+      "required": ["studioId", "startTime", "status"]
+    },
+    "RecordingChunk": {
+      "title": "RecordingChunk",
+      "description": "A 10-minute segment of a recording.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recordingId": { "type": "string" },
+        "chunkIndex": { "type": "number" },
+        "url": { "type": "string" },
+        "size": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recordingId", "chunkIndex", "url"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection."
+    },
+    "/studios/{studioId}": {
+      "schema": "Studio",
+      "description": "User studios."
+    },
+    "/scenes/{sceneId}": {
+      "schema": "Scene",
+      "description": "Root-level scenes or linked by studioId."
+    },
+    "/sceneItems/{itemId}": {
+      "schema": "SceneItem",
+      "description": "Items within a scene."
+    },
+    "/recordings/{recordingId}": {
+      "schema": "Recording",
+      "description": "Recording sessions."
+    },
+    "/recordings/{recordingId}/chunks/{chunkId}": {
+      "schema": "RecordingChunk",
+      "description": "Chunks for a recording session."
+    }
+  }
+}

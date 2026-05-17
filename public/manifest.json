@@ -1,0 +1,17 @@
+{
+  "name": "PodSoft Pro",
+  "short_name": "PodSoft",
+  "description": "Professional Mobile Production Studio",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3221/3221803.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { QRCodeSVG } from 'qrcode.react';
+import { DriveView } from './components/DriveView';
 import { 
   Settings, 
   Radio, 
@@ -631,7 +632,7 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // New UI State
-  const [currentView, setCurrentView] = useState<'studio' | 'file' | 'edit' | 'view' | 'profile'>('studio');
+  const [currentView, setCurrentView] = useState<'studio' | 'file' | 'edit' | 'view' | 'profile' | 'drive'>('studio');
   const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
   const [recordings, setRecordings] = useState<any[]>([]);
   const [recordingId, setRecordingId] = useState<string | null>(null);
@@ -1910,6 +1911,7 @@ export default function App() {
                   {currentView === 'edit' && <Layout size={20} className="text-purple-400" />}
                   {currentView === 'view' && <Maximize2 size={20} className="text-green-400" />}
                   {currentView === 'profile' && <UserIcon size={20} className="text-orange-400" />}
+                  {currentView === 'drive' && <FolderOpen size={20} className="text-green-500" />}
                   <div className="flex flex-col">
                     <span className="font-black italic uppercase tracking-wider text-white text-sm">{currentView}</span>
                     <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">{currentView === 'edit' ? 'Production Assets' : 'System Module'}</span>
@@ -1924,6 +1926,7 @@ export default function App() {
                 {currentView === 'file' && <FilePage recordings={recordings} studioId={studioId} onSummarize={summarizeRecording} isAnalyzing={isAnalyzing} aiSummary={aiSummary} />}
                 {currentView === 'edit' && <EditorPage activeScene={activeScene} studioId={studioId} onOptimize={analyzeComposition} onGenerateScript={generateScript} generatedScript={generatedScript} setGeneratedScript={setGeneratedScript} isAnalyzing={isAnalyzing} />}
                 {currentView === 'profile' && <ProfilePage user={user} logout={logout} recordings={recordings} scenes={scenes} />}
+                {currentView === 'drive' && <DriveView />}
               </div>
             </motion.div>
           )}
@@ -2008,6 +2011,7 @@ export default function App() {
             <div className="h-16 bg-obs-surface border-t border-obs-border flex items-center justify-around px-4">
                <NavBtn icon={<Layout size={20}/>} label="Studio" active={currentView === 'studio'} onClick={() => setCurrentView('studio')} />
                <NavBtn icon={<FolderOpen size={20}/>} label="Files" active={currentView === 'file'} onClick={() => setCurrentView('file')} />
+               <NavBtn icon={<Database size={20}/>} label="Drive" active={currentView === 'drive'} onClick={() => setCurrentView('drive')} />
                <NavBtn icon={<Activity size={20}/>} label="Edit" active={currentView === 'edit'} onClick={() => setCurrentView('edit')} />
                <NavBtn icon={<UserIcon size={20}/>} label="Profile" active={currentView === 'profile'} onClick={() => setCurrentView('profile')} />
             </div>

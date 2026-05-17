@@ -40,4 +40,4 @@ Professional-grade web-based video production and streaming studio, inspired by 
 5. Click **Connect**.
 
 ---
-
+*Developed for Antigravity AI Studio*

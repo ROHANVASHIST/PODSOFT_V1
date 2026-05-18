@@ -797,7 +797,49 @@ export default function App() {
   const [droidCamQuality, setDroidCamQuality] = useState(70);
   const [isScanning, setIsScanning] = useState(false);
   const [discoveryLog, setDiscoveryLog] = useState('');
+  const [qrPCIP, setQrPCIP] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname;
+      if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.startsWith('169.254')) {
+        return hostname;
+      }
+    }
+    return '192.168.1.100';
+  });
+  const [qrPCPort, setQrPCPort] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const currentPort = window.location.port;
+      if (currentPort === '3000') return '3001';
+      return currentPort || '3001';
+    }
+    return '3001';
+  });
+  const [qrLegacyScheme, setQrLegacyScheme] = useState(false);
   const [selectedSourceType, setSelectedSourceType] = useState<Source['type'] | null>(null);
+
+  // Fetch PC's actual local network IP address when the DroidCam input opens
+  useEffect(() => {
+    if (showDroidCamInput) {
+      fetch('/api/networks')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.addresses && data.addresses.length > 0) {
+            // Prioritize standard local subnet classes (192.168.*, 10.*, 172.*)
+            const localAddress = data.addresses.find((addr: any) => 
+              addr.address.startsWith('192.168') || 
+              addr.address.startsWith('10.') || 
+              addr.address.startsWith('172.')
+            ) || data.addresses[0];
+            
+            if (localAddress) {
+              setQrPCIP(localAddress.address);
+              console.log('Automatically detected PC local IP:', localAddress.address);
+            }
+          }
+        })
+        .catch((err) => console.error('Failed to fetch PC network interfaces:', err));
+    }
+  }, [showDroidCamInput]);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [showProperties, setShowProperties] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -2544,9 +2586,52 @@ export default function App() {
                      </span>
                      <button onClick={() => setShowDroidCamInput(false)} className="hover:text-white"><Plus size={14} className="rotate-45" /></button>
                   </div>
-                  <div className="flex flex-col items-center gap-2 bg-zinc-900 p-3 rounded">
-                    <QRCodeSVG value={`podsoft:${studioId}`} size={160} />
-                    <p className="text-[9px] text-zinc-400 text-center">Scan to connect mobile device</p>
+                  <div className="flex flex-col items-center gap-3 bg-zinc-900/60 border border-zinc-800 p-3.5 rounded">
+                    <div className="bg-white p-1.5 rounded shadow-inner">
+                      <QRCodeSVG 
+                        value={`${qrLegacyScheme ? 'podsoftv1://' : 'podsoft://'}connect?ip=${qrPCIP}&port=${qrPCPort}&quality=${droidCamQuality}&studioId=${studioId}`} 
+                        size={150} 
+                      />
+                    </div>
+                    <div className="w-full flex flex-col gap-1.5 mt-1 border-t border-white/5 pt-2">
+                      <p className="text-[9px] text-zinc-400 font-medium text-center">Scan with PodSoft Mobile App to connect</p>
+                      
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <div className="flex flex-col gap-0.5">
+                          <label className="text-[8px] uppercase font-bold text-zinc-500">PC IP Address</label>
+                          <input 
+                            type="text" 
+                            value={qrPCIP} 
+                            onChange={(e) => setQrPCIP(e.target.value)}
+                            className="bg-zinc-950 p-1 text-[10px] border border-zinc-800 rounded focus:border-green-500 outline-none font-mono text-zinc-200"
+                            placeholder="192.168.1.XX"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <label className="text-[8px] uppercase font-bold text-zinc-500">PC Port</label>
+                          <input 
+                            type="text" 
+                            value={qrPCPort} 
+                            onChange={(e) => setQrPCPort(e.target.value)}
+                            className="bg-zinc-950 p-1 text-[10px] border border-zinc-800 rounded focus:border-green-500 outline-none font-mono text-zinc-200"
+                            placeholder="3001"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <input 
+                          type="checkbox"
+                          id="legacy-scheme-qr"
+                          checked={qrLegacyScheme}
+                          onChange={(e) => setQrLegacyScheme(e.target.checked)}
+                          className="w-3 h-3 rounded bg-zinc-950 border-zinc-850 accent-green-500 cursor-pointer"
+                        />
+                        <label htmlFor="legacy-scheme-qr" className="text-[9px] text-zinc-400 cursor-pointer select-none">
+                          Use legacy scheme (<code className="text-[8px] text-zinc-500">podsoftv1://</code>)
+                        </label>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-3 overflow-y-auto pr-1">
                     <div className="bg-green-900/20 border border-green-500/30 p-2.5 rounded text-[10px] text-green-200 leading-snug">

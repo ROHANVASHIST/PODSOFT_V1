@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
 import axios from "axios";
+import os from "os";
 
 dotenv.config();
 
@@ -22,8 +23,11 @@ async function startServer() {
     console.log("Client connected:", socket.id);
 
     socket.on("join-room", (roomId) => {
-      socket.join(roomId);
-      console.log(`Socket ${socket.id} joined room ${roomId}`);
+      const room = typeof roomId === "object" && roomId !== null && "roomId" in roomId
+        ? (roomId as any).roomId
+        : roomId;
+      socket.join(room);
+      console.log(`Socket ${socket.id} joined room ${room}`);
     });
 
     socket.on("signal", (data) => {
@@ -72,6 +76,28 @@ async function startServer() {
 
   app.get("/api/v1/jobs/:id", (req, res) => {
     res.json({ id: req.params.id, status: "processing", progress: 50 });
+  });
+
+  // Network detection endpoint to get local network IP addresses
+  app.get("/api/networks", (req, res) => {
+    const interfaces = os.networkInterfaces();
+    const addresses: { name: string; address: string }[] = [];
+    
+    for (const name in interfaces) {
+      const iface = interfaces[name];
+      if (!iface) continue;
+      
+      for (const entry of iface) {
+        if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254")) {
+          addresses.push({
+            name,
+            address: entry.address
+          });
+        }
+      }
+    }
+    
+    res.json({ addresses });
   });
 
   // Proxy route for DroidCam/CORS bypass

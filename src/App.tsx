@@ -72,22 +72,22 @@ const localDb: any = {
 
 // Simplified local implementations
 const db = {};
-const collection = (db: any, name: string) => name;
-const doc = (db: any, name: string, id: string) => ({ id });
+const collection = (db: any, ...args: string[]) => args.join('/');
+const doc = (db: any, ...args: string[]) => ({ id: args[args.length - 1] });
 const addDoc = async (col: string, data: any) => {
     const id = Math.random().toString(36).substring(7);
     localDb[col] = localDb[col] || [];
     localDb[col].push({ id, ...data });
     return { id };
 };
-const setDoc = async (docRef: any, data: any) => {};
-const updateDoc = async (docRef: any, data: any) => {};
+const setDoc = async (docRef: any, data: any, options?: any) => {};
+const updateDoc = async (docRef: any, data: any, options?: any) => {};
 const deleteDoc = async (docRef: any) => {};
 const query = (...args: any[]) => ({});
 const where = (...args: any[]) => ({});
 const orderBy = (...args: any[]) => ({});
 const limit = (...args: any[]) => ({});
-const onSnapshot = (q: any, callback: any) => {
+const onSnapshot = (q: any, callback: any, errorCallback?: any) => {
     callback({ docs: [] });
     return () => {};
 };
@@ -2087,7 +2087,7 @@ export default function App() {
               
               {/* Source Selection for Preview */}
               <div className="flex gap-1 overflow-x-auto pb-1">
-                {Array.from(new Map(scenes.flatMap(s => s.sources).map(s => [s.id, s])).values()).map(s => (
+                {Array.from(new Map(scenes.flatMap(s => s.sources).map((s: any) => [s.id, s])).values()).map((s: any) => (
                   <button
                     key={s.id}
                     onClick={() => setSelectedPreviewSourceId(s.id)}
@@ -2101,7 +2101,7 @@ export default function App() {
               <div className="flex-1 bg-black border border-obs-border relative overflow-hidden">
               {/* All sources across scenes */}
               {(() => {
-                const allSources = Array.from(new Map(scenes.flatMap(s => s.sources).map(s => [s.id, s])).values());
+                const allSources = Array.from(new Map(scenes.flatMap(s => s.sources).map((s: any) => [s.id, s])).values()) as any[];
                 const previewSourceId = selectedPreviewSourceId || allSources[0]?.id;
                 const source = allSources.find(s => s.id === previewSourceId);
                 return source ? (
@@ -2159,10 +2159,10 @@ export default function App() {
                 <AnimatePresence mode="popLayout" initial={false}>
                   <motion.div
                     key={activeSceneId}
-                    initial={variants.initial}
-                    animate={variants.animate}
-                    exit={variants.exit}
-                    transition={variants.transition}
+                    initial={(variants as any)?.initial}
+                    animate={(variants as any)?.animate}
+                    exit={(variants as any)?.exit}
+                    transition={(variants as any)?.transition as any}
                     className="absolute inset-0"
                   >
                     {activeScene.sources.length === 0 && (

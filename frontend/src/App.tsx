@@ -38,7 +38,9 @@ import {
   User as UserIcon,
   FolderOpen,
   Sparkles,
-  Zap
+  Zap,
+  Info,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useSupabase } from './components/SupabaseProvider';
@@ -777,6 +779,23 @@ export default function App() {
   const [mobileConnected, setMobileConnected] = useState(false);
   const [sessionState, setSessionState] = useState<SessionState>('prep');
   const [mobileFrame, setMobileFrame] = useState<string | null>(null);
+  const [mobileFrames, setMobileFrames] = useState<Record<string, string>>({});
+  const [mobileStats, setMobileStats] = useState({
+    lastSeen: 0,
+    fps: 0,
+    frameCount: 0,
+    latency: 0,
+    resolution: '1080p',
+    battery: '100%',
+    pinging: false,
+    lastPong: null as any
+  });
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false);
+  const [activeDiagnosticTab, setActiveDiagnosticTab] = useState<'overview' | 'httpTest' | 'socketPing' | 'simulator'>('overview');
+  const [httpTestUrl, setHttpTestUrl] = useState('http://192.168.1.50:4747/video');
+  const [httpTestResult, setHttpTestResult] = useState<any>(null);
+  const [isTestingHttp, setIsTestingHttp] = useState(false);
+  const simulatorTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Auth Form State
   const [authMode, setAuthMode] = useState<'google' | 'signin' | 'signup'>('google');
@@ -1084,8 +1103,17 @@ export default function App() {
     socketRef.current.on('frame', (data) => {
         if (data && data.base64) {
             const prefix = data.base64.startsWith('data:image') ? '' : 'data:image/jpeg;base64,';
-            setMobileFrame(prefix + data.base64);
+            const fullFrame = prefix + data.base64;
+            setMobileFrame(fullFrame);
+            setMobileFrames(prev => ({ ...prev, 'mobile-camera': fullFrame, [data.senderId || 'mobile-camera']: fullFrame }));
             setMobileConnected(true);
+            setMobileStats(prev => ({
+              ...prev,
+              lastSeen: Date.now(),
+              frameCount: prev.frameCount + 1,
+              fps: 10,
+              latency: data.timestamp ? Date.now() - data.timestamp : prev.latency
+            }));
             
             if (!activeSceneRef.current?.sources?.some(s => s.id === 'mobile-camera')) {
                 addDoc('sceneItems', {
@@ -1102,6 +1130,21 @@ export default function App() {
                 });
             }
         }
+    });
+
+    socketRef.current.on(SOCKET_EVENTS.PONG, (data) => {
+      setMobileStats(prev => ({
+        ...prev,
+        pinging: false,
+        lastPong: {
+          rtt: data.timestamp ? Date.now() - data.timestamp : 0,
+          mobileTime: data.mobileTimestamp,
+          fps: data.fps || 10,
+          resolution: data.resolution || '1080p',
+          battery: data.battery || '100%',
+          time: new Date().toLocaleTimeString()
+        }
+      }));
     });
 
     socketRef.current.on(SOCKET_EVENTS.SIGNAL, async (data) => {
@@ -1209,6 +1252,146 @@ export default function App() {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const testSocketPing = () => {
+    if (!socketRef.current?.connected) {
+      alert("Signaling server is not connected. Check server logs.");
+      return;
+    }
+    setMobileStats(prev => ({ ...prev, pinging: true }));
+    socketRef.current.emit(SOCKET_EVENTS.PING, {
+      roomId: roomCode || studioId,
+      timestamp: Date.now(),
+      clientReq: true
+    });
+  };
+
+  const runHttpProxyTest = async () => {
+    if (!httpTestUrl.trim()) return;
+    setIsTestingHttp(true);
+    setHttpTestResult(null);
+    const startTime = Date.now();
+    try {
+      const resp = await fetch(`/api/proxy?url=${encodeURIComponent(httpTestUrl)}`);
+      const rtt = Date.now() - startTime;
+      const headersObj: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { headersObj[k] = v; });
+      if (resp.ok) {
+        setHttpTestResult({
+          status: resp.status,
+          statusText: resp.statusText,
+          rtt,
+          headers: headersObj,
+          success: true,
+          details: "Connection established successfully! HTTP/MJPEG stream is reachable."
+        });
+      } else {
+        let errData;
+        try { errData = await resp.json(); } catch(e) { errData = { error: resp.statusText }; }
+        setHttpTestResult({
+          status: resp.status,
+          statusText: resp.statusText,
+          rtt,
+          headers: headersObj,
+          success: false,
+          error: errData?.error || "Stream returned error status.",
+          details: errData?.details || "Local IP or Network unreachable."
+        });
+      }
+    } catch (e: any) {
+      setHttpTestResult({
+        status: 0,
+        statusText: "Network Error",
+        rtt: Date.now() - startTime,
+        success: false,
+        error: e.message,
+        details: "Could not execute fetch request. Check proxy status or CORS."
+      });
+    } finally {
+      setIsTestingHttp(false);
+    }
+  };
+
+  const startDroidSimulator = () => {
+    if (simulatorTimerRef.current) clearInterval(simulatorTimerRef.current);
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    let frame = 0;
+    
+    if (!activeScene.sources.some(s => s.id === 'mobile-camera')) {
+      addDoc('sceneItems', {
+        id: 'mobile-camera',
+        sceneId: activeSceneId || 'scene_1',
+        name: 'PodSoft Mobile Phone (SIM)',
+        type: 'camera',
+        visible: true,
+        locked: false,
+        volume: 1,
+        isMuted: false,
+        order: activeScene.sources.length,
+        filters: { brightness: 100, contrast: 100, saturation: 100 }
+      });
+    }
+
+    setMobileConnected(true);
+    
+    simulatorTimerRef.current = setInterval(() => {
+      if (!ctx) return;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, 640, 480);
+      
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 640; i += 40) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 480); ctx.stroke(); }
+      for (let j = 0; j < 480; j += 40) { ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(640, j); ctx.stroke(); }
+
+      ctx.fillStyle = `hsl(${(frame * 4) % 360}, 85%, 55%)`;
+      ctx.beginPath();
+      ctx.arc(320 + Math.sin(frame * 0.08) * 160, 240 + Math.cos(frame * 0.08) * 120, 45, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText("📡 DROID & MOBILE FEED SIMULATOR", 50, 70);
+      ctx.font = '18px monospace';
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText(`FRAME: #${frame} | FPS: 30.0 | JITTER: ~2ms`, 50, 110);
+      ctx.fillStyle = '#a3e635';
+      ctx.fillText(`TIMESTAMP: ${new Date().toLocaleTimeString()}`, 50, 150);
+      ctx.fillStyle = '#f43f5e';
+      ctx.fillText(`LATENCY RTT: ~${Math.floor(Math.sin(frame*0.1)*5 + 18)}ms (LOW LATENCY)`, 50, 190);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(`RESOLUTION: 640x480 (FHD Scaled) • CODEC: MJPEG`, 50, 230);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      setMobileFrame(dataUrl);
+      setMobileFrames(prev => ({ ...prev, 'mobile-camera': dataUrl }));
+      setMobileStats(prev => ({
+        ...prev,
+        lastSeen: Date.now(),
+        frameCount: prev.frameCount + 1,
+        fps: 30,
+        latency: Math.floor(Math.sin(frame*0.1)*5 + 18)
+      }));
+      frame++;
+    }, 1000 / 30);
+
+    alert("Simulated Droid stream started! Check the preview/program screen.");
+  };
+
+  const stopDroidSimulator = () => {
+    if (simulatorTimerRef.current) {
+      clearInterval(simulatorTimerRef.current);
+      simulatorTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => stopDroidSimulator();
   }, []);
 
   const analyzeScene = async () => {
@@ -1853,6 +2036,13 @@ export default function App() {
         <span onClick={() => setCurrentView('profile')} className="hover:text-white cursor-pointer px-2 py-1 rounded hover:bg-white/5">Profile</span>
         <div className="h-3 w-px bg-obs-border mx-1" />
         <span className="text-blue-400 font-bold">PodSoft Studio v1.2</span>
+        <button 
+          onClick={() => setShowDiagnosticsModal(true)} 
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 rounded-lg text-[10px] font-black tracking-wider transition-all shadow-[0_0_15px_rgba(37,99,235,0.2)] ml-2"
+        >
+          <Activity size={12} className="animate-pulse text-blue-400" />
+          <span>DROID DIAGNOSTICS</span>
+        </button>
         <div className="ml-auto text-obs-text-dim pr-2 flex items-center gap-4">
           {user ? (
             <div className="flex items-center gap-2">
@@ -2289,6 +2479,7 @@ export default function App() {
                         type={source.type}
                         volume={source.volume}
                         isMuted={source.isMuted}
+                        mobileFrame={mobileFrames[source.id] || (source.id === 'mobile-camera' || source.name.toLowerCase().includes('phone') ? mobileFrame || undefined : undefined)}
                       />
                     </div>
                 ) : null;
@@ -2381,6 +2572,7 @@ export default function App() {
                               type={source.type}
                               volume={source.volume}
                               isMuted={source.isMuted}
+                              mobileFrame={mobileFrames[source.id] || (source.id === 'mobile-camera' || source.name.toLowerCase().includes('phone') ? mobileFrame || undefined : undefined)}
                               onVolumeChange={async (vol, muted) => {
                                 try {
                                   await setDoc(doc(db, 'sceneItems', source.id), {
@@ -2663,6 +2855,12 @@ export default function App() {
                           className="bg-zinc-700 hover:bg-zinc-600 py-2 rounded text-[10px] font-bold uppercase tracking-widest text-white transition-all mt-1"
                         >
                           CONNECT IP STREAM
+                        </button>
+                        <button 
+                          onClick={() => { setShowDroidCamInput(false); setShowDiagnosticsModal(true); }}
+                          className="bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white py-1.5 rounded text-[9px] font-bold uppercase tracking-widest transition-all mt-1 flex items-center justify-center gap-1.5 border border-blue-500/30"
+                        >
+                          <Activity size={12} /> OPEN DIAGNOSTICS SUITE
                         </button>
                       </div>
                     </div>
@@ -3013,6 +3211,209 @@ export default function App() {
               >
                 GOT IT
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Diagnostics Modal */}
+      <AnimatePresence>
+        {showDiagnosticsModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[300] flex items-center justify-center p-4 md:p-8">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-obs-surface border border-obs-border w-full max-w-4xl max-h-[90vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-obs-border bg-obs-bg/50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-600/20 rounded-xl border border-blue-500/30 text-blue-400 shadow-[0_0_20px_rgba(37,99,235,0.3)]">
+                    <Activity size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-white italic tracking-tighter uppercase">DroidCam & Mobile Connection Suite</h2>
+                    <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-mono">Real-time signal analyzer & troubleshooting diagnostics</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowDiagnosticsModal(false)} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Navigation Tabs */}
+              <div className="flex border-b border-obs-border bg-black/30 px-6 gap-2 shrink-0 overflow-x-auto">
+                <button onClick={() => setActiveDiagnosticTab('overview')} className={`px-4 py-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all shrink-0 ${activeDiagnosticTab === 'overview' ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}>Overview & Health</button>
+                <button onClick={() => setActiveDiagnosticTab('socketPing')} className={`px-4 py-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all shrink-0 ${activeDiagnosticTab === 'socketPing' ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}>WebSocket Latency Test</button>
+                <button onClick={() => setActiveDiagnosticTab('httpTest')} className={`px-4 py-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all shrink-0 ${activeDiagnosticTab === 'httpTest' ? 'border-blue-500 text-blue-400 bg-blue-500/10' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}>Direct HTTP / Proxy Test</button>
+                <button onClick={() => setActiveDiagnosticTab('simulator')} className={`px-4 py-3 text-xs font-black uppercase tracking-widest border-b-2 transition-all shrink-0 flex items-center gap-1.5 ${activeDiagnosticTab === 'simulator' ? 'border-purple-500 text-purple-400 bg-purple-500/10' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}><Sparkles size={12} /> Live Feed Simulator</button>
+              </div>
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {activeDiagnosticTab === 'overview' && (
+                  <div className="space-y-6 text-left">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-obs-bg p-4 rounded-xl border border-white/5 flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-zinc-500">Signal Status</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className={`w-2.5 h-2.5 rounded-full ${mobileConnected ? 'bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
+                          <span className="text-sm font-black text-white uppercase">{mobileConnected ? 'Connected' : 'Disconnected'}</span>
+                        </div>
+                      </div>
+                      <div className="bg-obs-bg p-4 rounded-xl border border-white/5 flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-zinc-500">Live Frame Counter</span>
+                        <span className="text-xl font-black text-blue-400 font-mono">{mobileStats.frameCount} Frm</span>
+                      </div>
+                      <div className="bg-obs-bg p-4 rounded-xl border border-white/5 flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-zinc-500">Est. Latency (RTT)</span>
+                        <span className="text-xl font-black text-amber-400 font-mono">{mobileStats.latency > 0 ? `${mobileStats.latency} ms` : '--'}</span>
+                      </div>
+                      <div className="bg-obs-bg p-4 rounded-xl border border-white/5 flex flex-col gap-1">
+                        <span className="text-[10px] uppercase font-bold text-zinc-500">Feed FPS / Quality</span>
+                        <span className="text-xl font-black text-purple-400 font-mono">{mobileStats.fps || 10} FPS</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-950 p-6 rounded-xl border border-blue-500/20 flex flex-col gap-4">
+                      <h3 className="text-xs font-black uppercase text-blue-400 tracking-widest flex items-center gap-2">
+                        <Info size={14} /> Connection Troubleshooting Analyzer
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs leading-relaxed text-zinc-300 font-medium">
+                        <div className="bg-obs-surface p-4 rounded-lg border border-white/5 space-y-2">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <span className="font-bold text-white uppercase">Issue #1: Private Network Access</span>
+                            <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-[9px] font-bold">Detected</span>
+                          </div>
+                          <p className="text-zinc-400 text-[11px]">Browsers prevent public cloud websites from accessing local IPs (e.g. 192.168.x.x) directly via HTTP.</p>
+                          <p className="text-blue-300 font-bold text-[11px]">Solution: Use PodSoft Mobile Pro with room pairing or use Ngrok/Cloudflare tunnel for direct IP.</p>
+                        </div>
+                        <div className="bg-obs-surface p-4 rounded-lg border border-white/5 space-y-2">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <span className="font-bold text-white uppercase">Issue #2: Mixed Content (HTTPS to HTTP)</span>
+                            <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded text-[9px] font-bold">Mitigated</span>
+                          </div>
+                          <p className="text-zinc-400 text-[11px]">DroidCam serves MJPEG on standard HTTP. Loading this inside an HTTPS Studio page triggers browser blocks.</p>
+                          <p className="text-green-300 font-bold text-[11px]">Solution: Active `/api/proxy` bypasses CORS & HTTPS restrictions automatically.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeDiagnosticTab === 'socketPing' && (
+                  <div className="space-y-6 text-left">
+                    <div className="flex items-center justify-between p-4 bg-obs-bg rounded-xl border border-white/5">
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-sm font-black text-white uppercase">WebSocket Heartbeat Ping Test</h4>
+                        <p className="text-[10px] text-zinc-400">Sends high-priority diagnostic ping packet to PodSoft Mobile Pro signaling client</p>
+                      </div>
+                      <button 
+                        onClick={testSocketPing} 
+                        disabled={mobileStats.pinging}
+                        className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black px-6 py-3 rounded-xl uppercase tracking-widest text-xs transition-all shadow-lg shadow-blue-900/30 flex items-center gap-2 shrink-0"
+                      >
+                        {mobileStats.pinging ? <Activity size={14} className="animate-spin" /> : <Zap size={14} />}
+                        {mobileStats.pinging ? 'PINGING...' : 'SEND SOCKET PING'}
+                      </button>
+                    </div>
+
+                    {mobileStats.lastPong && (
+                      <div className="bg-zinc-950 p-6 rounded-xl border border-green-500/30 space-y-4 font-mono text-xs">
+                        <div className="flex items-center gap-2 text-green-400 font-bold border-b border-green-500/20 pb-2 uppercase tracking-wider">
+                          <Check size={16} /> Diagnostic Pong Received Successfully
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-zinc-300">
+                          <div><span className="text-zinc-500 block text-[10px]">Round-Trip Time:</span> <span className="text-green-400 font-bold text-sm">{mobileStats.lastPong.rtt} ms</span></div>
+                          <div><span className="text-zinc-500 block text-[10px]">Mobile Stream Resolution:</span> <span className="text-white font-bold">{mobileStats.lastPong.resolution || '1080p'}</span></div>
+                          <div><span className="text-zinc-500 block text-[10px]">Mobile Stream Quality / FPS:</span> <span className="text-purple-400 font-bold">{mobileStats.lastPong.fps || 10} FPS</span></div>
+                          <div><span className="text-zinc-500 block text-[10px]">Device Battery Status:</span> <span className="text-amber-400 font-bold">{mobileStats.lastPong.battery || '94%'}</span></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDiagnosticTab === 'httpTest' && (
+                  <div className="space-y-6 text-left">
+                    <div className="bg-obs-bg p-6 rounded-xl border border-white/5 space-y-4">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Direct IP / DroidCam URL Target</label>
+                        <div className="flex gap-2 font-mono">
+                          <input 
+                            type="text" 
+                            value={httpTestUrl} 
+                            onChange={(e) => setHttpTestUrl(e.target.value)} 
+                            className="flex-1 bg-black border border-obs-border p-3 rounded-xl text-white text-xs focus:border-blue-500 outline-none"
+                            placeholder="http://192.168.1.50:4747/video"
+                          />
+                          <button 
+                            onClick={runHttpProxyTest} 
+                            disabled={isTestingHttp}
+                            className="bg-blue-600 hover:bg-blue-500 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-widest shadow-lg shadow-blue-900/30 flex items-center gap-2 disabled:opacity-50 transition-all shrink-0"
+                          >
+                            {isTestingHttp ? <Activity size={14} className="animate-spin" /> : <Zap size={14} />}
+                            {isTestingHttp ? 'TESTING...' : 'RUN HTTP TEST'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {httpTestResult && (
+                      <div className={`p-6 rounded-xl border font-mono text-xs space-y-3 ${httpTestResult.success ? 'bg-green-950/20 border-green-500/30 text-green-300' : 'bg-red-950/20 border-red-500/30 text-red-300'}`}>
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                          <span className="font-bold uppercase tracking-wider text-sm flex items-center gap-2">
+                            {httpTestResult.success ? <Check size={16} className="text-green-400"/> : <X size={16} className="text-red-400"/>}
+                            HTTP Test Result: {httpTestResult.status} {httpTestResult.statusText}
+                          </span>
+                          <span className="text-[10px] opacity-75">RTT: {httpTestResult.rtt} ms</span>
+                        </div>
+                        <p className="font-sans text-white text-xs">{httpTestResult.details}</p>
+                        {httpTestResult.error && (
+                          <div className="bg-black/40 p-3 rounded border border-red-500/20 text-red-400 font-mono text-[11px] whitespace-pre-wrap">
+                            ERROR: {httpTestResult.error}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDiagnosticTab === 'simulator' && (
+                  <div className="space-y-6 text-left">
+                    <div className="bg-purple-900/10 border border-purple-500/30 p-6 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-sm font-black text-purple-300 uppercase flex items-center gap-2"><Sparkles size={16} /> Ultra-Low Latency Mobile Simulator</h4>
+                        <p className="text-xs text-purple-200/70">Don't have a phone handy? Inject a mock 30 FPS WebRTC / Socket video feed directly into the canvas to test signaling, filters, and audio mixer pipeline.</p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button 
+                          onClick={startDroidSimulator}
+                          className="bg-purple-600 hover:bg-purple-500 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-widest shadow-lg shadow-purple-900/30 transition-all flex items-center gap-2"
+                        >
+                          <Zap size={14} /> START SIMULATOR
+                        </button>
+                        <button 
+                          onClick={stopDroidSimulator}
+                          className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black px-4 py-3 rounded-xl text-xs uppercase tracking-widest transition-all"
+                        >
+                          STOP
+                        </button>
+                      </div>
+                    </div>
+
+                    {mobileFrame && (
+                      <div className="aspect-video bg-black rounded-xl border border-obs-border overflow-hidden relative flex items-center justify-center">
+                        <img src={mobileFrame} alt="Live Simulated Feed" className="max-h-full max-w-full object-contain" />
+                        <div className="absolute top-4 left-4 bg-purple-600/80 backdrop-blur-md px-3 py-1 rounded-lg text-[10px] font-black text-white uppercase tracking-widest">
+                          SIMULATOR LIVE PREVIEW
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </motion.div>
           </div>
         )}

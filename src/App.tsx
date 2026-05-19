@@ -63,36 +63,124 @@ import { useSupabase } from './components/SupabaseProvider';
 
 const OperationType = { CREATE: 'create', UPDATE: 'update', DELETE: 'delete', LIST: 'list' };
 const handleFirestoreError = (error: any, op: any, table?: string) => console.error(`Error in ${table || 'unknown table'} during ${op}:`, error);
+
 const localDb: any = {
   studios: [],
   scenes: [],
   sceneItems: [],
-  users: []
+  users: [],
+  recordings: []
 };
 
-// Simplified local implementations
+const listeners: Set<Function> = new Set();
+const notifyListeners = () => listeners.forEach(fn => fn());
+
 const db = {};
 const collection = (db: any, ...args: string[]) => args.join('/');
-const doc = (db: any, ...args: string[]) => ({ id: args[args.length - 1] });
+const doc = (db: any, col: string, id: string) => ({ collection: col, id });
+
 const addDoc = async (col: string, data: any) => {
-    const id = Math.random().toString(36).substring(7);
-    localDb[col] = localDb[col] || [];
-    localDb[col].push({ id, ...data });
-    return { id };
+  const id = (data.id || Math.random().toString(36).substring(7)).toString();
+  const tableName = col.split('/').pop() || col;
+  localDb[tableName] = localDb[tableName] || [];
+  const newRecord = { id, ...data };
+  localDb[tableName].push(newRecord);
+  notifyListeners();
+  return { id, ...newRecord };
 };
-const setDoc = async (docRef: any, data: any, options?: any) => {};
-const updateDoc = async (docRef: any, data: any, options?: any) => {};
-const deleteDoc = async (docRef: any) => {};
-const query = (...args: any[]) => ({});
-const where = (...args: any[]) => ({});
-const orderBy = (...args: any[]) => ({});
-const limit = (...args: any[]) => ({});
+
+const setDoc = async (docRef: any, data: any, options?: any) => {
+  const tableName = docRef.collection;
+  localDb[tableName] = localDb[tableName] || [];
+  const idx = localDb[tableName].findIndex((item: any) => item.id === docRef.id);
+  if (idx >= 0) {
+    localDb[tableName][idx] = { ...localDb[tableName][idx], ...data, updatedAt: new Date() };
+  } else {
+    localDb[tableName].push({ id: docRef.id, ...data, createdAt: new Date(), updatedAt: new Date() });
+  }
+  notifyListeners();
+};
+
+const updateDoc = async (docRef: any, data: any, options?: any) => {
+  const tableName = docRef.collection;
+  localDb[tableName] = localDb[tableName] || [];
+  const idx = localDb[tableName].findIndex((item: any) => item.id === docRef.id);
+  if (idx >= 0) {
+    localDb[tableName][idx] = { ...localDb[tableName][idx], ...data, updatedAt: new Date() };
+    notifyListeners();
+  }
+};
+
+const deleteDoc = async (docRef: any) => {
+  const tableName = docRef.collection;
+  if (localDb[tableName]) {
+    localDb[tableName] = localDb[tableName].filter((item: any) => item.id !== docRef.id);
+    notifyListeners();
+  }
+};
+
+const query = (col: string, ...args: any[]) => ({ col: col.split('/').pop() || col, filters: args });
+const where = (field: string, op: string, val: any) => ({ type: 'where', field, op, val });
+const orderBy = (field: string, dir: string) => ({ type: 'orderBy', field, dir });
+const limit = (n: number) => ({ type: 'limit', n });
+
+const getDocs = async (q: any) => {
+  const tableName = q.col || q;
+  let items = [...(localDb[tableName] || [])];
+  if (q.filters) {
+    for (const f of q.filters) {
+      if (f && f.type === 'where' && f.op === '==') {
+        items = items.filter(x => x[f.field] === f.val);
+      }
+    }
+  }
+  const snapshotDocs = items.map((item: any) => ({
+    id: item.id,
+    data: () => item,
+    exists: () => true
+  }));
+  return { empty: snapshotDocs.length === 0, docs: snapshotDocs };
+};
+
+const getDoc = async (docRef: any) => {
+  const tableName = docRef.collection;
+  const item = (localDb[tableName] || []).find((x: any) => x.id === docRef.id);
+  return {
+    id: docRef.id,
+    exists: () => !!item,
+    data: () => item || {}
+  };
+};
+
 const onSnapshot = (q: any, callback: any, errorCallback?: any) => {
-    callback({ docs: [] });
-    return () => {};
+  const tableName = q.col || q;
+  const execute = () => {
+    let items = [...(localDb[tableName] || [])];
+    if (q.filters) {
+      for (const f of q.filters) {
+        if (f && f.type === 'where') {
+          if (f.op === '==') items = items.filter(x => x[f.field] === f.val);
+          if (f.op === 'in') items = items.filter(x => Array.isArray(f.val) && f.val.includes(x[f.field]));
+        }
+        if (f && f.type === 'orderBy') {
+          items.sort((a, b) => ((a[f.field] ?? 0) > (b[f.field] ?? 0) ? 1 : -1) * (f.dir === 'desc' ? -1 : 1));
+        }
+      }
+    }
+    const snapshotDocs = items.map(item => ({
+      id: item.id,
+      data: () => item
+    }));
+    callback({ docs: snapshotDocs });
+  };
+
+  execute();
+  listeners.add(execute);
+  return () => {
+    listeners.delete(execute);
+  };
 };
-const getDocs = async (q: any) => ({ empty: true, docs: [] });
-const getDoc = async (docRef: any) => ({ exists: () => false, data: () => ({}) });
+
 const serverTimestamp = () => new Date();
 
 
@@ -1374,7 +1462,7 @@ export default function App() {
       }
       setShowDroidCamInput(true);
       setShowAddSource(false);
-      discoverDroidCam();
+      // Removed automatic discoverDroidCam() to prevent console spam. User can click "Scan" manually.
     } else {
       addSource(type);
     }

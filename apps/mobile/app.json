@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "PodSoft Mobile Pro",
+    "slug": "podsoft-mobile-pro",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.podsoft.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "PodSoft Mobile Pro needs camera access to stream high-quality video to your studio.",
+        "NSMicrophoneUsageDescription": "PodSoft Mobile Pro needs microphone access for live broadcast audio."
+      }
+    },
+    "android": {
+      "package": "com.podsoft.mobile",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f172a"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

@@ -8,7 +8,7 @@ import http from "http";
 import { Server } from "socket.io";
 import axios from "axios";
 import os from "os";
-import { SOCKET_EVENTS } from "./src/lib/shared/socket-events";
+import { SOCKET_EVENTS } from "../frontend/src/lib/shared/socket-events";
 
 dotenv.config();
 
@@ -55,6 +55,50 @@ async function startServer() {
         senderId: socket.id,
         ...data
       });
+    });
+
+    socket.on("frame", (data) => {
+      io.to(data.roomId).emit("frame", {
+        senderId: socket.id,
+        ...data
+      });
+    });
+
+    socket.on(SOCKET_EVENTS.FRAME, (data) => {
+      io.to(data.roomId).emit("frame", {
+        senderId: socket.id,
+        ...data
+      });
+    });
+
+    socket.on(SOCKET_EVENTS.PING, (data) => {
+      // Send echo back to sender for server latency test
+      socket.emit(SOCKET_EVENTS.PONG, { serverEcho: true, timestamp: data?.timestamp });
+      // Broadcast to room for peer latency test if roomId is provided
+      if (data?.roomId) {
+        socket.to(data.roomId).emit(SOCKET_EVENTS.PING, {
+          senderId: socket.id,
+          ...data
+        });
+      }
+    });
+
+    socket.on(SOCKET_EVENTS.PONG, (data) => {
+      if (data?.roomId) {
+        socket.to(data.roomId).emit(SOCKET_EVENTS.PONG, {
+          senderId: socket.id,
+          ...data
+        });
+      }
+    });
+
+    socket.on(SOCKET_EVENTS.DIAGNOSTIC_REPORT, (data) => {
+      if (data?.roomId) {
+        io.to(data.roomId).emit(SOCKET_EVENTS.DIAGNOSTIC_REPORT, {
+          senderId: socket.id,
+          ...data
+        });
+      }
     });
   });
 
@@ -309,12 +353,13 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production" && process.env.RUN_FRONTEND !== "false") {
     process.env.VITE_MIDDLEWARE_MODE = 'true';
     const vite = await createViteServer({
+      root: path.resolve(__dirname, "../frontend"),
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else if (process.env.RUN_FRONTEND !== "false") {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.resolve(__dirname, "../frontend/dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

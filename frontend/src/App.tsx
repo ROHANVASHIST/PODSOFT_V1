@@ -269,6 +269,7 @@ const SourceVideo = ({
   type,
   volume = 1.0,
   isMuted = false,
+  mobileFrame,
   onVolumeChange
 }: { 
   id: string,
@@ -279,6 +280,7 @@ const SourceVideo = ({
   type: Source['type'],
   volume?: number,
   isMuted?: boolean,
+  mobileFrame?: string,
   onVolumeChange?: (volume: number, isMuted: boolean) => void
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -288,16 +290,16 @@ const SourceVideo = ({
   const [showTroubleshoot, setShowTroubleshoot] = useState(false);
   
   // Use the stream prop if provided, otherwise default to status management
-  const [status, setStatus] = useState<'connecting' | 'connected' | 'failed'>((stream || type !== 'droidcam') ? 'connected' : 'connecting');
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'failed'>((stream || mobileFrame || type !== 'droidcam') ? 'connected' : 'connecting');
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const watchdogRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Update status if stream becomes available
+  // Update status if stream or mobileFrame becomes available
   useEffect(() => {
-    if (stream) setStatus('connected');
-  }, [stream]);
+    if (stream || mobileFrame) setStatus('connected');
+  }, [stream, mobileFrame]);
 
   const startWatchdog = () => {
     if (watchdogRef.current) clearTimeout(watchdogRef.current);
@@ -414,7 +416,7 @@ const SourceVideo = ({
   }, [filters?.chromaKey?.enabled]);
 
   useEffect(() => {
-    if (!isChromaActive || (!videoRef.current && type !== 'droidcam')) return;
+    if (!isChromaActive || (!videoRef.current && !mobileFrame && type !== 'droidcam')) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -423,7 +425,14 @@ const SourceVideo = ({
 
     let animationId: number;
     const proxiedUrl = type === 'droidcam' && url ? `/api/proxy?url=${encodeURIComponent(url)}` : url;
-    const sourceEl = type === 'droidcam' ? (document.querySelector(`img[src*="proxy?url=${encodeURIComponent(url || '')}"]`) as HTMLImageElement) : videoRef.current;
+    let sourceEl: HTMLElement | null = null;
+    if (mobileFrame) {
+      sourceEl = document.querySelector(`img[data-source-id="${id}"]`) as HTMLImageElement;
+    } else if (type === 'droidcam') {
+      sourceEl = document.querySelector(`img[src*="proxy?url=${encodeURIComponent(url || '')}"]`) as HTMLImageElement;
+    } else {
+      sourceEl = videoRef.current;
+    }
 
     const processFrame = () => {
       if (!sourceEl || (sourceEl instanceof HTMLVideoElement && sourceEl.paused)) {
@@ -444,7 +453,7 @@ const SourceVideo = ({
         canvas.height = height;
       }
 
-      ctx.drawImage(sourceEl, 0, 0, width, height);
+      ctx.drawImage(sourceEl as CanvasImageSource, 0, 0, width, height);
       
       if (filters?.chromaKey?.enabled) {
         const frame = ctx.getImageData(0, 0, width, height);
@@ -478,7 +487,7 @@ const SourceVideo = ({
 
     processFrame();
     return () => cancelAnimationFrame(animationId);
-  }, [isChromaActive, filters?.chromaKey, type, url]);
+  }, [isChromaActive, filters?.chromaKey, type, url, mobileFrame, id]);
 
   const hexToRgb = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -499,7 +508,17 @@ const SourceVideo = ({
 
   return (
     <div className="relative w-full h-full overflow-hidden" data-source-id={id}>
-      {type === 'droidcam' && url && !stream && (
+      {mobileFrame && !stream && (
+        <img 
+          src={mobileFrame}
+          data-source-id={id}
+          alt="PodSoft Mobile Stream"
+          style={filterStyle}
+          className={`w-full h-full object-contain transition-[filter] duration-200 ${locked ? '' : 'pointer-events-none'} ${isChromaActive ? 'hidden' : ''}`}
+        />
+      )}
+
+      {type === 'droidcam' && url && !stream && !mobileFrame && (
         <div id={`source-container-${(url || '').replace(/[^a-zA-Z0-9]/g, '')}`} className="w-full h-full bg-zinc-900 group relative flex flex-col items-center justify-center overflow-hidden font-sans">
           <img 
             src={displayUrl}
@@ -719,7 +738,7 @@ const SourceVideo = ({
         </div>
       )}
 
-      {(type !== 'droidcam' || stream) && (
+      {!mobileFrame && (type !== 'droidcam' || stream) && (
         <video 
           ref={videoRef} 
           data-source-id={id}
@@ -757,6 +776,7 @@ export default function App() {
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [mobileConnected, setMobileConnected] = useState(false);
   const [sessionState, setSessionState] = useState<SessionState>('prep');
+  const [mobileFrame, setMobileFrame] = useState<string | null>(null);
   
   // Auth Form State
   const [authMode, setAuthMode] = useState<'google' | 'signin' | 'signup'>('google');
@@ -947,6 +967,7 @@ export default function App() {
   const [discoveryLog, setDiscoveryLog] = useState('');
   const [selectedSourceType, setSelectedSourceType] = useState<Source['type'] | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [localIps, setLocalIps] = useState<string[]>([]);
   const [showProperties, setShowProperties] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedSettingsTab, setSelectedSettingsTab] = useState('General');
@@ -1049,8 +1070,10 @@ export default function App() {
     socketRef.current.on('connect', () => {
       console.log('Signaling Connected', socketRef.current?.id);
       if (studioId) {
+        const shortCode = `PS-${studioId.slice(0, 4).toUpperCase()}`;
         socketRef.current?.emit(SOCKET_EVENTS.JOIN_ROOM, { roomId: studioId, role: 'studio' });
-        setRoomCode(`PS-${studioId.slice(0, 4).toUpperCase()}`);
+        socketRef.current?.emit(SOCKET_EVENTS.JOIN_ROOM, { roomId: shortCode, role: 'studio' });
+        setRoomCode(shortCode);
       }
     });
 
@@ -1058,15 +1081,40 @@ export default function App() {
         setMobileConnected(true);
     });
 
+    socketRef.current.on('frame', (data) => {
+        if (data && data.base64) {
+            const prefix = data.base64.startsWith('data:image') ? '' : 'data:image/jpeg;base64,';
+            setMobileFrame(prefix + data.base64);
+            setMobileConnected(true);
+            
+            if (!activeSceneRef.current?.sources?.some(s => s.id === 'mobile-camera')) {
+                addDoc('sceneItems', {
+                  id: 'mobile-camera',
+                  sceneId: activeSceneRef.current?.id || 'scene_1',
+                  name: 'PodSoft Mobile Phone',
+                  type: 'camera',
+                  visible: true,
+                  locked: false,
+                  volume: 1,
+                  isMuted: false,
+                  order: 0,
+                  filters: { brightness: 100, contrast: 100, saturation: 100 }
+                });
+            }
+        }
+    });
+
     socketRef.current.on(SOCKET_EVENTS.SIGNAL, async (data) => {
       if (!pcRef.current) setupPeerConnection();
       
-      const { signal, senderId } = data;
+      const { signal, senderId, roomId } = data;
+      const targetRoom = roomId || studioId;
       if (signal.type === 'offer') {
-          await pcRef.current?.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          const sdpObj = signal.sdp?.sdp ? signal.sdp : { type: 'offer', sdp: signal.sdp };
+          await pcRef.current?.setRemoteDescription(new RTCSessionDescription(sdpObj));
           const answer = await pcRef.current?.createAnswer();
           await pcRef.current?.setLocalDescription(answer as RTCSessionDescriptionInit);
-          socketRef.current?.emit(SOCKET_EVENTS.SIGNAL, { roomId: studioId, signal: { type: 'answer', sdp: pcRef.current?.localDescription }, to: senderId });
+          socketRef.current?.emit(SOCKET_EVENTS.SIGNAL, { roomId: targetRoom, signal: { type: 'answer', sdp: answer }, to: senderId });
       } else if (signal.type === 'candidate') {
           await pcRef.current?.addIceCandidate(new RTCIceCandidate(signal.candidate));
       }
@@ -1079,8 +1127,19 @@ export default function App() {
             console.log('Received track:', e.track);
             const stream = e.streams[0];
             setStreams(prev => ({ ...prev, 'mobile-camera': stream }));
-            // TODO: Implement Supabase sync for sources
-            // setScenes(prev => prev.map((s, i) => i === 0 ? {...s, sources: [...s.sources, { id: 'mobile-camera', name: 'Mobile Camera', type: 'camera', visible: true, locked: false, volume: 1, isMuted: false, filters: { brightness: 100, contrast: 100, saturation: 100 } }]} : s));
+            
+            addDoc('sceneItems', {
+              id: 'mobile-camera',
+              sceneId: activeSceneRef.current?.id || 'scene_1',
+              name: 'Mobile Phone Camera',
+              type: 'camera',
+              visible: true,
+              locked: false,
+              volume: 1,
+              isMuted: false,
+              order: 0,
+              filters: { brightness: 100, contrast: 100, saturation: 100 }
+            });
         };
         pcRef.current = pc;
     };
@@ -1385,6 +1444,19 @@ export default function App() {
   useEffect(() => {
     refreshDevices();
   }, []);
+
+  useEffect(() => {
+    if (showDroidCamInput) {
+      fetch('/api/networks')
+        .then(res => res.json())
+        .then(data => {
+          if (data.addresses) {
+            setLocalIps(data.addresses.map((a: any) => a.address));
+          }
+        })
+        .catch(err => console.warn('Failed to fetch local IPs:', err));
+    }
+  }, [showDroidCamInput]);
 
   const discoverDroidCam = async () => {
     setIsScanning(true);
@@ -2079,83 +2151,94 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {isMobile && currentView === 'studio' && (
-          <div className="flex-1 flex flex-col">
-            <div className="h-64 bg-black relative shrink-0">
-               {/* Mobile Preview */}
-               <div className="absolute inset-0 z-0">
-                 {/* Similar to program-view rendering */}
-                 {activeScene.sources.map(s => s.visible && (
-                   <div key={s.id} className="absolute inset-0 bg-black">
-                     <SourceVideo {...s} type={s.type} locked={true} />
+        {isMobile && (
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {currentView === 'studio' ? (
+              <div className="flex-1 flex flex-col min-h-0 overflow-auto">
+                <div className="h-64 bg-black relative shrink-0">
+                   {/* Mobile Preview */}
+                   <div className="absolute inset-0 z-0">
+                     {/* Similar to program-view rendering */}
+                     {activeScene.sources.map(s => s.visible && (
+                       <div key={s.id} className="absolute inset-0 bg-black">
+                         <SourceVideo {...s} type={s.type} locked={true} />
+                       </div>
+                     )).slice(0, 1)} {/* Show top source as preview on mobile */}
                    </div>
-                 )).slice(0, 1)} {/* Show top source as preview on mobile */}
-               </div>
-               <div className="absolute top-2 left-2 px-2 py-0.5 bg-red-600 rounded text-[8px] font-black uppercase text-white animate-pulse">LIVE PREVIEW</div>
-            </div>
-            
-            <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-               <div className="flex items-center justify-between border-b border-obs-border pb-2">
-                 <h2 className="text-xs font-black uppercase tracking-widest text-zinc-400">Control Center</h2>
-                 <div className="flex gap-2">
-                   <button onClick={() => setShowAddSource(true)} className="p-2 bg-blue-600 rounded-lg"><Plus size={16}/></button>
-                 </div>
-               </div>
-               
-               <div className="grid grid-cols-2 gap-2">
-                 <ControlButton 
-                   active={isRecording} 
-                   onClick={isRecording ? stopRecording : startRecording}
-                   label={isRecording ? "REC" : "REC"}
-                   activeColor="bg-red-600"
-                   className="h-12 text-[10px]"
-                 />
-                 <ControlButton 
-                   active={isScreenRecording} 
-                   onClick={isScreenRecording ? stopScreenRecording : startScreenRecording}
-                   label={isScreenRecording ? "SCR" : "SCR"}
-                   activeColor="bg-orange-600"
-                   className="h-12 text-[10px]"
-                 />
-                 <ControlButton 
-                   active={isVirtualCam} 
-                   onClick={isVirtualCam ? stopVirtualCam : startVirtualCam}
-                   label={isVirtualCam ? "V-CAM" : "V-CAM"}
-                   activeColor="bg-sky-600"
-                   className="h-12 text-[10px]"
-                 />
-                 <ControlButton 
-                   onClick={openProjector}
-                   label="PROJ"
-                   className="h-12 text-[10px] bg-indigo-900/40"
-                 />
-               </div>
+                   <div className="absolute top-2 left-2 px-2 py-0.5 bg-red-600 rounded text-[8px] font-black uppercase text-white animate-pulse">LIVE PREVIEW</div>
+                </div>
+                
+                <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
+                   <div className="flex items-center justify-between border-b border-obs-border pb-2">
+                     <h2 className="text-xs font-black uppercase tracking-widest text-zinc-400">Control Center</h2>
+                     <div className="flex gap-2">
+                       <button onClick={() => setShowAddSource(true)} className="p-2 bg-blue-600 rounded-lg"><Plus size={16}/></button>
+                     </div>
+                   </div>
+                   
+                   <div className="grid grid-cols-2 gap-2">
+                     <ControlButton 
+                       active={isRecording} 
+                       onClick={isRecording ? stopRecording : startRecording}
+                       label={isRecording ? "REC" : "REC"}
+                       activeColor="bg-red-600"
+                       className="h-12 text-[10px]"
+                     />
+                     <ControlButton 
+                       active={isScreenRecording} 
+                       onClick={isScreenRecording ? stopScreenRecording : startScreenRecording}
+                       label={isScreenRecording ? "SCR" : "SCR"}
+                       activeColor="bg-orange-600"
+                       className="h-12 text-[10px]"
+                     />
+                     <ControlButton 
+                       active={isVirtualCam} 
+                       onClick={isVirtualCam ? stopVirtualCam : startVirtualCam}
+                       label={isVirtualCam ? "V-CAM" : "V-CAM"}
+                       activeColor="bg-sky-600"
+                       className="h-12 text-[10px]"
+                     />
+                     <ControlButton 
+                       onClick={openProjector}
+                       label="PROJ"
+                       className="h-12 text-[10px] bg-indigo-900/40"
+                     />
+                   </div>
 
-               <div className="bg-obs-surface p-4 rounded-xl border border-obs-border">
-                  <span className="text-[10px] font-black text-obs-text-dim uppercase mb-3 block">Timeline Feed</span>
-                  <div className="flex flex-col gap-2">
-                    {activeScene.sources.map(src => (
-                      <div key={src.id} className="flex items-center gap-3 bg-obs-bg p-2 rounded-lg border border-white/5">
-                         <div className="w-10 h-10 bg-zinc-800 rounded flex items-center justify-center">
-                            {src.type === 'camera' && <Camera size={16}/>}
-                            {src.type === 'droidcam' && <Video size={16}/>}
-                            {src.type === 'screen' && <Monitor size={16}/>}
-                         </div>
-                         <div className="flex-1">
-                            <p className="text-[10px] font-bold text-white">{src.name}</p>
-                            <p className="text-[8px] text-zinc-500 uppercase">{src.type}</p>
-                         </div>
-                         <button onClick={() => toggleVisibility(src.id)} className={src.visible ? 'text-blue-500' : 'text-zinc-600'}>
-                           {src.visible ? <Eye size={16}/> : <EyeOff size={16}/>}
-                         </button>
+                   <div className="bg-obs-surface p-4 rounded-xl border border-obs-border">
+                      <span className="text-[10px] font-black text-obs-text-dim uppercase mb-3 block">Timeline Feed</span>
+                      <div className="flex flex-col gap-2">
+                        {activeScene.sources.map(src => (
+                          <div key={src.id} className="flex items-center gap-3 bg-obs-bg p-2 rounded-lg border border-white/5">
+                             <div className="w-10 h-10 bg-zinc-800 rounded flex items-center justify-center">
+                                {src.type === 'camera' && <Camera size={16}/>}
+                                {src.type === 'droidcam' && <Video size={16}/>}
+                                {src.type === 'screen' && <Monitor size={16}/>}
+                             </div>
+                             <div className="flex-1">
+                                <p className="text-[10px] font-bold text-white">{src.name}</p>
+                                <p className="text-[8px] text-zinc-500 uppercase">{src.type}</p>
+                             </div>
+                             <button onClick={() => toggleVisibility(src.id)} className={src.visible ? 'text-blue-500' : 'text-zinc-600'}>
+                               {src.visible ? <Eye size={16}/> : <EyeOff size={16}/>}
+                             </button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-               </div>
-            </div>
+                   </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-auto bg-obs-bg/95">
+                {currentView === 'file' && <FilePage recordings={recordings} studioId={studioId} onSummarize={summarizeRecording} isAnalyzing={isAnalyzing} aiSummary={aiSummary} />}
+                {currentView === 'edit' && <EditorPage activeScene={activeScene} studioId={studioId} onOptimize={analyzeComposition} onGenerateScript={generateScript} generatedScript={generatedScript} setGeneratedScript={setGeneratedScript} isAnalyzing={isAnalyzing} />}
+                {currentView === 'profile' && <ProfilePage user={user} logout={logout} recordings={recordings} scenes={scenes} />}
+                {currentView === 'drive' && <DriveView />}
+              </div>
+            )}
 
             {/* Mobile Bottom Navigation */}
-            <div className="h-16 bg-obs-surface border-t border-obs-border flex items-center justify-around px-4">
+            <div className="h-16 shrink-0 bg-obs-surface border-t border-obs-border flex items-center justify-around px-4 z-50">
                <NavBtn icon={<Layout size={20}/>} label="Studio" active={currentView === 'studio'} onClick={() => setCurrentView('studio')} />
                <NavBtn icon={<FolderOpen size={20}/>} label="Files" active={currentView === 'file'} onClick={() => setCurrentView('file')} />
                <NavBtn icon={<Database size={20}/>} label="Drive" active={currentView === 'drive'} onClick={() => setCurrentView('drive')} />
@@ -2484,14 +2567,19 @@ export default function App() {
                   className="fixed inset-0 m-auto w-80 h-fit max-h-[90vh] bg-obs-surface border border-obs-border p-5 z-[100] shadow-2xl rounded flex flex-col gap-4"
                 >
                   <div className="flex justify-between items-center border-b border-obs-border pb-2">
-                     <span className="text-xs font-bold uppercase tracking-widest text-green-400 font-mono flex items-center gap-2">
-                       <Video size={14} /> DroidCam Connection
+                     <span className="text-xs font-bold uppercase tracking-widest text-blue-400 font-mono flex items-center gap-2">
+                       <Video size={14} /> PodSoft Mobile Pro / DroidCam
                      </span>
                      <button onClick={() => setShowDroidCamInput(false)} className="hover:text-white"><Plus size={14} className="rotate-45" /></button>
                   </div>
-                  <div className="flex flex-col items-center gap-2 bg-zinc-900 p-3 rounded">
-                    <QRCodeSVG value={`podsoft:${studioId}`} size={160} />
-                    <p className="text-[9px] text-zinc-400 text-center">Scan to connect mobile device</p>
+                  <div className="flex flex-col items-center gap-2 bg-zinc-950 p-4 rounded-xl border border-blue-500/30 shadow-inner">
+                    <QRCodeSVG value={`http://${localIps[0] || window.location.hostname}:${window.location.port || 3000}?room=${roomCode || studioId.slice(0, 4).toUpperCase()}`} size={160} />
+                    <p className="text-[10px] text-blue-300 font-bold text-center mt-1">Scan QR in PodSoft Mobile Pro to instantly pair</p>
+                    <div className="w-full bg-blue-950/40 p-2.5 rounded-lg flex flex-col gap-1 text-center font-mono text-xs border border-blue-500/20 mt-1">
+                      <span className="text-[10px] text-zinc-400 font-sans font-semibold uppercase tracking-wider">Manual IP Connection</span>
+                      <span className="text-white font-bold">Studio IP: <span className="bg-blue-600/30 px-1.5 py-0.5 rounded text-blue-300">{localIps[0] ? `${localIps[0]}:3000` : `${window.location.hostname}:3000`}</span></span>
+                      <span className="text-white font-bold">Room Code: <span className="bg-amber-500/20 px-1.5 py-0.5 rounded text-amber-400 tracking-wider">{roomCode || `PS-${studioId.slice(0, 4).toUpperCase()}`}</span></span>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-3 overflow-y-auto pr-1">
                     <div className="bg-green-900/20 border border-green-500/30 p-2.5 rounded text-[10px] text-green-200 leading-snug">

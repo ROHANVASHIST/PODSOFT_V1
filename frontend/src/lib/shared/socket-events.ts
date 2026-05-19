@@ -3,4 +3,8 @@ export const SOCKET_EVENTS = {
   SIGNAL: 'signal',
   COMMAND: 'command',
   PAIRED: 'paired',
+  PING: 'ping',
+  PONG: 'pong',
+  FRAME: 'frame',
+  DIAGNOSTIC_REPORT: 'diagnostic-report',
 };

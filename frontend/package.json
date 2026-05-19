@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm run dev:frontend --prefix .."
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   }
 }
